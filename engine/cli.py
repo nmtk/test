@@ -11,9 +11,12 @@ import argparse
 import sys
 
 from engine import __version__
+from engine.backtest import periods_per_year, run_backtest
 from engine.core.config import load_settings, load_universe
+from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
 from engine.data.sync import sync_universe
+from engine.strategies import all_strategies, all_xs_strategies, get_strategy
 
 
 def _cmd_version(_args: argparse.Namespace) -> int:
@@ -57,6 +60,61 @@ def _cmd_sync_data(args: argparse.Namespace) -> int:
     return 1 if results and failures == len(results) else 0
 
 
+def _cmd_list_strategies(_args: argparse.Namespace) -> int:
+    print("single-asset:")
+    for name, cls in sorted(all_strategies().items()):
+        space = ", ".join(f"{k}={v}" for k, v in cls.param_space.items())
+        print(f"  {name:<18} {space}")
+    print("cross-sectional (panel):")
+    for name, cls in sorted(all_xs_strategies().items()):
+        space = ", ".join(f"{k}={v}" for k, v in cls.param_space.items())
+        print(f"  {name:<18} {space}")
+    return 0
+
+
+def _parse_params(items: list[str] | None) -> dict:
+    params: dict = {}
+    for item in items or []:
+        key, _, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        try:
+            params[key] = int(value)
+        except ValueError:
+            params[key] = float(value)
+    return params
+
+
+def _cmd_backtest(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    universe = load_universe(settings.universe_path)
+    entry = next((e for e in universe.entries if e.instrument.symbol == args.symbol), None)
+    if entry is None and args.source is None:
+        print(f"unknown symbol {args.symbol!r} in universe; pass --source explicitly")
+        return 2
+    source = args.source or entry.live_source.source
+    asset_class = entry.instrument.asset_class if entry else AssetClass.CRYPTO
+
+    store = OHLCVStore(settings.data_dir / "ohlcv")
+    bars = store.read(source, args.symbol, args.timeframe)
+    if len(bars) == 0:
+        print(f"no data for {source}:{args.symbol}:{args.timeframe} — run sync-data first")
+        return 1
+
+    strategy = get_strategy(args.strategy)(**_parse_params(args.param))
+    weights = strategy.weights(bars)
+    result = run_backtest(
+        bars["close"],
+        weights,
+        fee_bps=args.fee_bps,
+        slippage_bps=args.slippage_bps,
+        periods_per_year=periods_per_year(args.timeframe, asset_class),
+    )
+    print(f"{strategy.describe()} on {source}:{args.symbol}:{args.timeframe} ({len(bars)} bars)")
+    for key, value in result.stats.items():
+        print(f"  {key:<14} {value:.4f}")
+    return 0
+
+
 def _cmd_stub(name: str, milestone: str):
     def run(_args: argparse.Namespace) -> int:
         print(f"[{name}] not implemented yet (planned for {milestone})")
@@ -81,6 +139,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--research", action="store_true", help="also sync deep-history research sources"
     )
     p_sync.set_defaults(func=_cmd_sync_data)
+
+    sub.add_parser("list-strategies", help="list registered seed strategies").set_defaults(
+        func=_cmd_list_strategies
+    )
+
+    p_bt = sub.add_parser("backtest", help="backtest a seed strategy over stored data")
+    p_bt.add_argument("--strategy", required=True, help="strategy name (see list-strategies)")
+    p_bt.add_argument("--symbol", required=True, help="canonical symbol, e.g. BTC/JPY")
+    p_bt.add_argument("--timeframe", default="1d")
+    p_bt.add_argument("--source", default=None, help="data source (default: from universe)")
+    p_bt.add_argument("--param", action="append", help="strategy param, e.g. lookback=50")
+    p_bt.add_argument("--fee-bps", type=float, default=10.0)
+    p_bt.add_argument("--slippage-bps", type=float, default=5.0)
+    p_bt.set_defaults(func=_cmd_backtest)
 
     sub.add_parser("paper-step", help="(M3) one paper executor step").set_defaults(
         func=_cmd_stub("paper-step", "M3")
