@@ -1,0 +1,45 @@
+name: executor-paper
+
+# Job C: paper trading on the same code path as live. Runs after bars close, reads the
+# champion config, steps the paper broker, and commits state/. (paper-step is a stub
+# until M3.)
+
+on:
+  schedule:
+    - cron: "5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: executor-paper
+  cancel-in-progress: false
+
+jobs:
+  step:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync
+      - name: Paper step
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+          ALPACA_PAPER: "true"
+        run: uv run trade paper-step
+      - name: Commit state
+        run: |
+          git config user.name "trade-bot"
+          git config user.email "trade-bot@users.noreply.github.com"
+          git add state/
+          if git diff --cached --quiet; then
+            echo "no state changes"
+          else
+            git commit -m "state: paper step [skip ci]"
+            git push
+          fi

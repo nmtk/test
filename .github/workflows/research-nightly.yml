@@ -1,0 +1,42 @@
+name: research-nightly
+
+# Job D: the only heavy job. Time-boxed and run once per day (never 24/7) to respect
+# Actions usage norms. Runs parameter search + GP discovery through the validation gate
+# and commits surviving challengers. (research is a stub until M4/M5.)
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: research-nightly
+  cancel-in-progress: false
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330  # well under the Actions per-job ceiling
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync
+      - name: Nightly research
+        run: uv run trade research
+      - name: Commit population + reports
+        run: |
+          git config user.name "trade-bot"
+          git config user.email "trade-bot@users.noreply.github.com"
+          git add state/
+          if git diff --cached --quiet; then
+            echo "no research changes"
+          else
+            git commit -m "research: nightly population update [skip ci]"
+            git push
+          fi

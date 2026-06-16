@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual envs / tooling
+.venv/
+.uv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Secrets — NEVER commit. Keys live only in GitHub Actions Secrets.
+.env
+*.env
+secrets.*
+*.key
+*.pem
+
+# Local data caches (regenerable). Curated state under state/ IS committed by the bot.
+data/cache/
+*.tmp
+
+# OS
+.DS_Store

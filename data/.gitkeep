@@ -1,0 +1,2 @@
+# OHLCV Parquet store lives here (data/ohlcv/{source}/{symbol}/{timeframe}.parquet),
+# committed by the data-sync job. Local-only caches go under data/cache/ (git-ignored).

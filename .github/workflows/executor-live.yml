@@ -1,0 +1,50 @@
+name: executor-live
+
+# Job B: real-money execution. DISABLED by default. It runs only when the repository
+# variable LIVE_ENABLED == 'true' AND trade-only API keys are present as secrets. The
+# engine additionally refuses to trade if state/KILL_SWITCH exists. (Live execution is
+# implemented in M7; this is the gated scaffold.)
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: executor-live
+  cancel-in-progress: false
+
+jobs:
+  step:
+    runs-on: ubuntu-latest
+    if: vars.LIVE_ENABLED == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync
+      - name: Live step (gated)
+        env:
+          TRADE_LIVE_ENABLED: "true"
+          ALPACA_PAPER: "false"
+          BITBANK_API_KEY: ${{ secrets.BITBANK_API_KEY }}
+          BITBANK_API_SECRET: ${{ secrets.BITBANK_API_SECRET }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: uv run trade paper-step  # placeholder until the live executor lands (M7)
+      - name: Commit state
+        run: |
+          git config user.name "trade-bot"
+          git config user.email "trade-bot@users.noreply.github.com"
+          git add state/
+          if git diff --cached --quiet; then
+            echo "no state changes"
+          else
+            git commit -m "state: live step [skip ci]"
+            git push
+          fi

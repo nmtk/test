@@ -1,0 +1,55 @@
+# Instrument universe — the markets the engine syncs, researches, and trades.
+#
+# Schema
+#   timeframes: default bar sizes for every instrument (overridable per instrument)
+#   instruments[]:
+#     symbol       canonical symbol ("BTC/JPY" crypto / "AAPL" equity)
+#     asset_class  crypto | equity
+#     venue        bitbank | alpaca   (execution venue; implies the live data source)
+#     base/quote   optional currency hints (defaults: crypto JPY, equity USD)
+#     research     optional deep-history source for R&D (re-validated on the live venue)
+#       source     binance | alpaca
+#       symbol     source-native symbol ("BTC/USDT")
+#
+# Start small and liquid; expand once the validation + execution pipeline is proven.
+
+timeframes: ["1h", "4h", "1d"]
+
+instruments:
+  # --- Crypto (bitbank live; Binance deep history for research) ----------------------
+  - symbol: "BTC/JPY"
+    asset_class: crypto
+    venue: bitbank
+    base: BTC
+    quote: JPY
+    research: { source: binance, symbol: "BTC/USDT" }
+
+  - symbol: "ETH/JPY"
+    asset_class: crypto
+    venue: bitbank
+    base: ETH
+    quote: JPY
+    research: { source: binance, symbol: "ETH/USDT" }
+
+  - symbol: "XRP/JPY"
+    asset_class: crypto
+    venue: bitbank
+    base: XRP
+    quote: JPY
+    research: { source: binance, symbol: "XRP/USDT" }
+
+  # --- US equities / ETFs (Alpaca; free IEX data) -----------------------------------
+  - symbol: "SPY"
+    asset_class: equity
+    venue: alpaca
+    quote: USD
+
+  - symbol: "QQQ"
+    asset_class: equity
+    venue: alpaca
+    quote: USD
+
+  - symbol: "AAPL"
+    asset_class: equity
+    venue: alpaca
+    quote: USD
