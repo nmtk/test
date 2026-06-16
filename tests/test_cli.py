@@ -14,6 +14,13 @@ def test_show_universe(capsys):
 
 
 def test_stub_commands_exit_zero(capsys):
-    for cmd in ("paper-step", "research", "validate", "report"):
+    for cmd in ("paper-step", "research", "report"):
         assert main([cmd]) == 0
         assert "not implemented" in capsys.readouterr().out
+
+
+def test_list_strategies_includes_archetypes(capsys):
+    assert main(["list-strategies"]) == 0
+    out = capsys.readouterr().out
+    assert "tsmom" in out
+    assert "xs_momentum" in out

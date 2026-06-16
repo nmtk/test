@@ -1,14 +1,16 @@
 """Command-line entry point: ``trade <command>`` (also ``python -m engine``).
 
-Implemented now (M0): ``version``, ``show-universe``, ``sync-data``.
-Stubs for later milestones: ``paper-step`` (M3), ``research``/``validate`` (M2/M4/M5),
-``report`` (M3). Stubs exit 0 with a clear message so Makefile/E2E wiring works early.
+Implemented: ``version``, ``show-universe``, ``sync-data``, ``list-strategies``,
+``backtest``, ``validate``. Stubs for later milestones: ``paper-step``/``report`` (M3),
+``research`` (M4/M5). Stubs exit 0 with a clear message so Makefile/E2E wiring works early.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+
+import numpy as np
 
 from engine import __version__
 from engine.backtest import periods_per_year, run_backtest
@@ -17,6 +19,9 @@ from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
 from engine.data.sync import sync_universe
 from engine.strategies import all_strategies, all_xs_strategies, get_strategy
+from engine.strategies.base import FloatParam, IntParam
+from engine.validation.gate import GateThresholds, evaluate_candidate_family
+from engine.validation.ledger import TrialLedger
 
 
 def _cmd_version(_args: argparse.Namespace) -> int:
@@ -115,6 +120,62 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _grid_from_space(space: dict, n: int = 5) -> dict[str, list]:
+    """Build a coarse parameter grid from a strategy's declared search space."""
+    grid: dict[str, list] = {}
+    for key, p in space.items():
+        if isinstance(p, IntParam):
+            grid[key] = sorted({int(round(x)) for x in np.linspace(p.low, p.high, n)})
+        elif isinstance(p, FloatParam):
+            grid[key] = [float(x) for x in np.linspace(p.low, p.high, n)]
+        elif isinstance(p, list):
+            grid[key] = list(p)
+    return grid
+
+
+def _cmd_validate(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    universe = load_universe(settings.universe_path)
+    entry = next((e for e in universe.entries if e.instrument.symbol == args.symbol), None)
+    source = args.source or (entry.live_source.source if entry else None)
+    if source is None:
+        print(f"unknown symbol {args.symbol!r} in universe; pass --source explicitly")
+        return 2
+    asset_class = entry.instrument.asset_class if entry else AssetClass.CRYPTO
+
+    store = OHLCVStore(settings.data_dir / "ohlcv")
+    bars = store.read(source, args.symbol, args.timeframe)
+    if len(bars) == 0:
+        print(f"no data for {source}:{args.symbol}:{args.timeframe} — run sync-data first")
+        return 1
+
+    strategy_cls = get_strategy(args.strategy)
+    grid = _grid_from_space(strategy_cls.param_space, n=args.grid)
+    ledger = TrialLedger.load(settings.state_dir / "trial_ledger.json")
+    report = evaluate_candidate_family(
+        bars,
+        strategy_cls,
+        grid,
+        fee_bps=args.fee_bps,
+        slippage_bps=args.slippage_bps,
+        ppy=periods_per_year(args.timeframe, asset_class),
+        thresholds=GateThresholds(),
+        ledger=ledger,
+        family=f"{args.strategy}:{args.symbol}:{args.timeframe}",
+    )
+    ledger.save()
+
+    print(f"validation: {report.name}  best={report.best_params}")
+    print(f"  bars={report.n_bars} configs={report.n_configs} cumulative_trials={report.n_trials}")
+    for key in ("sharpe_annual", "cpcv_median", "cpcv_pct_positive", "psr", "dsr", "pbo", "spa_p"):
+        print(f"  {key:<18} {getattr(report, key):.4f}")
+    print(f"  mintrl(bars)       {report.mintrl:.0f}")
+    for check, ok in report.checks.items():
+        print(f"  [{'PASS' if ok else 'FAIL'}] {check}")
+    print(f"  => {'ACCEPTED as challenger' if report.passed else 'REJECTED'}")
+    return 0
+
+
 def _cmd_stub(name: str, milestone: str):
     def run(_args: argparse.Namespace) -> int:
         print(f"[{name}] not implemented yet (planned for {milestone})")
@@ -160,9 +221,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("research", help="(M4/M5) nightly search + GP discovery").set_defaults(
         func=_cmd_stub("research", "M4/M5")
     )
-    sub.add_parser("validate", help="(M2) run the validation gate").set_defaults(
-        func=_cmd_stub("validate", "M2")
-    )
+
+    p_val = sub.add_parser("validate", help="run the validation gate on a strategy family")
+    p_val.add_argument("--strategy", required=True, help="strategy name (see list-strategies)")
+    p_val.add_argument("--symbol", required=True, help="canonical symbol, e.g. BTC/JPY")
+    p_val.add_argument("--timeframe", default="1d")
+    p_val.add_argument("--source", default=None, help="data source (default: from universe)")
+    p_val.add_argument("--grid", type=int, default=5, help="grid points per parameter")
+    p_val.add_argument("--fee-bps", type=float, default=10.0)
+    p_val.add_argument("--slippage-bps", type=float, default=5.0)
+    p_val.set_defaults(func=_cmd_validate)
     sub.add_parser("report", help="(M3) generate the markdown report").set_defaults(
         func=_cmd_stub("report", "M3")
     )
