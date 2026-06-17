@@ -15,7 +15,9 @@ from engine.backtest import periods_per_year
 from engine.core.config import Settings, load_universe
 from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
+from engine.gp.evolve import GPConfig
 from engine.orchestration.population import Population, StrategyRecord
+from engine.search.gp_search import discover_gp
 from engine.search.optuna_search import discover_challenger
 from engine.strategies import get_strategy
 from engine.validation.gate import GateThresholds
@@ -92,6 +94,8 @@ def run_research(
     slippage_bps: float = 5.0,
     seed: int = 0,
     min_bars: int = MIN_BARS,
+    include_gp: bool = False,
+    gp_config: GPConfig | None = None,
 ) -> ResearchSummary:
     universe = load_universe(settings.universe_path)
     store = OHLCVStore(settings.data_dir / "ohlcv")
@@ -134,6 +138,37 @@ def run_research(
                             report,
                             family=family,
                             strat_name=strat_name,
+                            symbol=symbol,
+                            source=source,
+                            tf=tf,
+                            ppy=ppy,
+                            last_ts=last_ts,
+                            existing=population.get(family),
+                        )
+                    )
+                    summary.n_evaluated += 1
+                    summary.families.append(family)
+                    if report.passed:
+                        summary.n_passed += 1
+
+                if include_gp:
+                    family = f"gp:{symbol}:{tf}"
+                    report = discover_gp(
+                        bars,
+                        ppy=ppy,
+                        cfg=gp_config,
+                        seed=seed,
+                        fee_bps=fee_bps,
+                        slippage_bps=slippage_bps,
+                        thresholds=thresholds,
+                        ledger=ledger,
+                        family=family,
+                    )
+                    population.upsert(
+                        _record_for(
+                            report,
+                            family=family,
+                            strat_name="gp",
                             symbol=symbol,
                             source=source,
                             tf=tf,

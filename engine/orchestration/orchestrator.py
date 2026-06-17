@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+import engine.gp.strategy  # noqa: F401  -- registers the "gp" strategy for get_strategy
 from engine.core.config import Settings, load_universe
 from engine.core.killswitch import is_engaged
 from engine.core.types import AssetClass, Instrument, Venue

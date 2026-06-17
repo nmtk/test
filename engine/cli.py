@@ -242,6 +242,7 @@ def _cmd_research(args: argparse.Namespace) -> int:
         symbols=args.symbol,
         timeframes=args.timeframe,
         trials=args.trials,
+        include_gp=args.gp,
     )
     print(
         f"research: evaluated={summary.n_evaluated} passed={summary.n_passed} "
@@ -317,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_research.add_argument("--symbol", action="append", help="symbol (repeatable)")
     p_research.add_argument("--timeframe", action="append", help="timeframe (repeatable)")
     p_research.add_argument("--trials", type=int, default=40, help="optuna trials per family")
+    p_research.add_argument("--gp", action="store_true", help="also run GP alpha discovery")
     p_research.set_defaults(func=_cmd_research)
 
     p_promote = sub.add_parser(

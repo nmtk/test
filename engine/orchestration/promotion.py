@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 
+import engine.gp.strategy  # noqa: F401  -- registers the "gp" strategy for get_strategy
 from engine.backtest import run_backtest
 from engine.backtest.metrics import max_drawdown
 from engine.core.config import Settings

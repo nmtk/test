@@ -27,8 +27,8 @@ jobs:
           python-version: "3.11"
           enable-cache: true
       - run: uv sync
-      - name: Nightly research
-        run: uv run trade research
+      - name: Nightly research (parameter search + GP alpha discovery)
+        run: uv run trade research --gp
       - name: Promote (incubation/decay FSM)
         run: uv run trade promote
       - name: Commit population + reports
