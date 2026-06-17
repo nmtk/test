@@ -1,44 +1,48 @@
 from engine.orchestration.population import Population, StrategyRecord
 
 
-def _rec(params, status="challenger", dsr=0.9):
+def _rec(family="tsmom:BTC/JPY:1h", status="incubating", dsr=0.9, params=None):
     return StrategyRecord(
-        family="tsmom:BTC/JPY:1h",
+        family=family,
         strategy="tsmom",
         symbol="BTC/JPY",
         source="bitbank",
         timeframe="1h",
-        params=params,
+        params=params or {"lookback": 50},
         status=status,
         metrics={"dsr": dsr},
+        incubation_start_ts=1000,
     )
 
 
-def test_insert_and_list(tmp_path):
+def test_insert_get_list(tmp_path):
     pop = Population(tmp_path / "pop.db")
-    pop.upsert(_rec({"lookback": 50}))
-    pop.upsert(_rec({"lookback": 100}, status="candidate"))
-    assert len(pop.list()) == 2
-    assert len(pop.list("challenger")) == 1
-    assert len(pop.list("candidate")) == 1
+    pop.upsert(_rec())
+    assert pop.get("tsmom:BTC/JPY:1h")["status"] == "incubating"
+    assert pop.get("missing") is None
+    assert len(pop.list()) == 1
+    assert len(pop.list("incubating")) == 1
     pop.close()
 
 
-def test_upsert_updates_same_family_params(tmp_path):
+def test_family_is_unique_key(tmp_path):
     pop = Population(tmp_path / "pop.db")
-    pop.upsert(_rec({"lookback": 50}, status="challenger", dsr=0.9))
-    pop.upsert(_rec({"lookback": 50}, status="champion", dsr=0.97))  # same key
+    pop.upsert(_rec(status="incubating", dsr=0.9, params={"lookback": 50}))
+    pop.upsert(_rec(status="champion", dsr=0.97, params={"lookback": 80}))  # same family
     rows = pop.list()
-    assert len(rows) == 1  # updated, not duplicated
+    assert len(rows) == 1  # one row per family
     assert rows[0]["status"] == "champion"
+    assert rows[0]["params"] == {"lookback": 80}
     assert rows[0]["metrics"]["dsr"] == 0.97
     pop.close()
 
 
-def test_set_status(tmp_path):
+def test_update_fields(tmp_path):
     pop = Population(tmp_path / "pop.db")
-    pop.upsert(_rec({"lookback": 50}))
-    pop.set_status("tsmom:BTC/JPY:1h", {"lookback": 50}, "retired")
-    assert len(pop.list("retired")) == 1
-    assert len(pop.list("challenger")) == 0
+    pop.upsert(_rec(status="incubating"))
+    pop.update_fields("tsmom:BTC/JPY:1h", status="champion", champion_start_ts=5000)
+    row = pop.get("tsmom:BTC/JPY:1h")
+    assert row["status"] == "champion"
+    assert row["champion_start_ts"] == 5000
+    assert row["incubation_start_ts"] == 1000  # untouched
     pop.close()

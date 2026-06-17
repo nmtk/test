@@ -1,8 +1,9 @@
 name: executor-paper
 
-# Job C: paper trading on the same code path as live. Runs after bars close, reads the
-# champion config, steps the paper broker, and commits state/. (paper-step is a stub
-# until M3.)
+# Job C: paper trading on the same code path as live. Each run first advances the
+# promotion/decay FSM (incubating -> champion on forward evidence; champion -> retired on
+# decay; rebuild champions.json), then steps the paper broker on the current champions and
+# commits state/.
 
 on:
   schedule:
@@ -26,6 +27,8 @@ jobs:
           python-version: "3.11"
           enable-cache: true
       - run: uv sync
+      - name: Promote (incubation/decay FSM)
+        run: uv run trade promote
       - name: Paper step
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}

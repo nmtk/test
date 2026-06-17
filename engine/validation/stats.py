@@ -25,6 +25,8 @@ _EULER_MASCHERONI = 0.5772156649015329
 @dataclass(frozen=True, slots=True)
 class ReturnMoments:
     n: int
+    mean: float  # per-bar
+    std: float  # per-bar (ddof=1)
     sharpe: float  # per-bar
     skew: float
     kurtosis: float  # non-excess (normal == 3)
@@ -34,19 +36,35 @@ def return_moments(returns: pd.Series | np.ndarray) -> ReturnMoments:
     r = pd.Series(returns).dropna()
     n = int(len(r))
     if n < 2:
-        return ReturnMoments(n=n, sharpe=0.0, skew=0.0, kurtosis=3.0)
+        return ReturnMoments(n=n, mean=0.0, std=0.0, sharpe=0.0, skew=0.0, kurtosis=3.0)
+    mean = float(r.mean())
     sd = float(r.std(ddof=1))
-    sharpe = 0.0 if sd == 0.0 else float(r.mean() / sd)
+    sharpe = 0.0 if sd == 0.0 else mean / sd
     skew = float(r.skew()) if n > 2 else 0.0
     # pandas .kurt() is *excess* (Fisher); the PSR/DSR formulas use non-excess kurtosis.
     excess_kurt = float(r.kurt()) if n > 3 else 0.0
-    return ReturnMoments(n=n, sharpe=sharpe, skew=skew, kurtosis=excess_kurt + 3.0)
+    return ReturnMoments(
+        n=n, mean=mean, std=sd, sharpe=sharpe, skew=skew, kurtosis=excess_kurt + 3.0
+    )
 
 
 def _psr_denominator(sharpe: float, skew: float, kurtosis: float) -> float:
     """sqrt(1 - skew*SR + (kurt-1)/4 * SR^2); the variance of the Sharpe estimator."""
     inner = 1.0 - skew * sharpe + (kurtosis - 1.0) / 4.0 * sharpe**2
     return math.sqrt(inner) if inner > 0.0 else float("nan")
+
+
+def sharpe_std_error(sharpe: float, n: int, skew: float, kurtosis: float) -> float:
+    """Standard error of the (per-bar) Sharpe estimate; ``inf`` if undefined.
+
+    Used to build a confidence band around a backtest Sharpe for incubation/decay checks.
+    """
+    if n < 2:
+        return float("inf")
+    denom = _psr_denominator(sharpe, skew, kurtosis)
+    if not math.isfinite(denom):
+        return float("inf")
+    return denom / math.sqrt(n - 1)
 
 
 def probabilistic_sharpe_ratio(

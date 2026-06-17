@@ -29,6 +29,8 @@ jobs:
       - run: uv sync
       - name: Nightly research
         run: uv run trade research
+      - name: Promote (incubation/decay FSM)
+        run: uv run trade promote
       - name: Commit population + reports
         run: |
           git config user.name "trade-bot"

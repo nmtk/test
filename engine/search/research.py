@@ -1,21 +1,20 @@
-"""The nightly research pipeline: search every archetype/symbol/timeframe, validate, promote.
+"""The nightly research pipeline: search every archetype/symbol/timeframe, validate, incubate.
 
-For each (archetype, symbol, timeframe) it runs optuna search + the validation gate, records
-the outcome in the population (challenger if it passed, else candidate), then rebuilds the
-champion set from all validated strategies. This is the loop that lets the system *find and
-adopt* better strategies over time instead of running a fixed rule.
+For each (archetype, symbol, timeframe) it runs optuna search + the validation gate and
+records the outcome in the population. A strategy that *passes* the gate enters
+``incubating`` (it is NOT allocated yet) — it must first survive shadow incubation on
+forward data, handled by the promotion FSM (``engine.orchestration.promotion``). This split
+is deliberate: the search/generator never promotes straight to live capital.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 from engine.backtest import periods_per_year
 from engine.core.config import Settings, load_universe
 from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
-from engine.orchestration.champions import Allocation, Champions, save_champions
 from engine.orchestration.population import Population, StrategyRecord
 from engine.search.optuna_search import discover_challenger
 from engine.strategies import get_strategy
@@ -30,11 +29,11 @@ MIN_BARS = 300
 class ResearchSummary:
     n_evaluated: int = 0
     n_passed: int = 0
-    n_champions: int = 0
     families: list[str] = field(default_factory=list)
 
 
-def _metrics(report) -> dict:
+def _metrics(report, ppy: float) -> dict:
+    """Validation outcome + backtest reference stats the incubation/decay bands compare to."""
     return {
         "dsr": report.dsr,
         "pbo": report.pbo,
@@ -42,39 +41,43 @@ def _metrics(report) -> dict:
         "cpcv_median": report.cpcv_median,
         "sharpe_annual": report.sharpe_annual,
         "passed": report.passed,
+        # reference (per-bar) backtest stats for forward-test bands:
+        "sharpe_per_bar": report.sharpe_per_bar,
+        "mean_per_bar": report.mean_per_bar,
+        "std_per_bar": report.std_per_bar,
+        "skew": report.skew,
+        "kurtosis": report.kurtosis,
+        "max_drawdown": report.max_drawdown,
+        "n": report.n_bars,
+        "ppy": ppy,
     }
 
 
-def build_champions_from_population(
-    population: Population, *, max_champions: int = 8, gross: float = 1.0
-) -> Champions:
-    """Select the best validated strategies as champions; demote the rest to challenger."""
-    eligible = population.list("challenger") + population.list("champion")
-    eligible.sort(
-        key=lambda r: (r["metrics"].get("dsr", 0.0), r["metrics"].get("cpcv_median", 0.0)),
-        reverse=True,
+def _record_for(report, *, family, strat_name, symbol, source, tf, ppy, last_ts, existing):
+    """Decide the population row for a discovery, preserving a still-valid champion."""
+    metrics = _metrics(report, ppy)
+    base = dict(
+        family=family,
+        strategy=strat_name,
+        symbol=symbol,
+        source=source,
+        timeframe=tf,
+        params=report.best_params,
+        metrics=metrics,
     )
-    selected = eligible[:max_champions]
+    if not report.passed:
+        return StrategyRecord(**base, status="candidate")
 
-    selected_keys = {(r["family"], r["timeframe"]) for r in selected}
-    for r in eligible:
-        new_status = "champion" if (r["family"], r["timeframe"]) in selected_keys else "challenger"
-        if r["status"] != new_status:
-            population.set_status(r["family"], r["params"], new_status)
-
-    weight = round(gross / len(selected), 4) if selected else 0.0
-    allocations = [
-        Allocation(
-            strategy=r["strategy"],
-            symbol=r["symbol"],
-            source=r["source"],
-            timeframe=r["timeframe"],
-            weight=weight,
-            params=r["params"],
+    # A still-valid champion with unchanged params keeps its status and clocks.
+    if existing and existing["status"] == "champion" and existing["params"] == report.best_params:
+        return StrategyRecord(
+            **base,
+            status="champion",
+            incubation_start_ts=existing.get("incubation_start_ts"),
+            champion_start_ts=existing.get("champion_start_ts"),
         )
-        for r in selected
-    ]
-    return Champions(allocations=allocations, updated=datetime.now(UTC).isoformat())
+    # New / changed / previously-failed -> (re)start incubation on forward data.
+    return StrategyRecord(**base, status="incubating", incubation_start_ts=last_ts)
 
 
 def run_research(
@@ -87,8 +90,6 @@ def run_research(
     thresholds: GateThresholds | None = None,
     fee_bps: float = 10.0,
     slippage_bps: float = 5.0,
-    max_champions: int = 8,
-    gross: float = 1.0,
     seed: int = 0,
     min_bars: int = MIN_BARS,
 ) -> ResearchSummary:
@@ -113,6 +114,7 @@ def run_research(
                 if len(bars) < min_bars:
                     continue
                 ppy = periods_per_year(tf, entry.instrument.asset_class)
+                last_ts = int(bars["ts"].iloc[-1])
                 for strat_name in archetypes:
                     family = f"{strat_name}:{symbol}:{tf}"
                     report = discover_challenger(
@@ -128,28 +130,23 @@ def run_research(
                         family=family,
                     )
                     population.upsert(
-                        StrategyRecord(
+                        _record_for(
+                            report,
                             family=family,
-                            strategy=strat_name,
+                            strat_name=strat_name,
                             symbol=symbol,
                             source=source,
-                            timeframe=tf,
-                            params=report.best_params,
-                            status="challenger" if report.passed else "candidate",
-                            metrics=_metrics(report),
+                            tf=tf,
+                            ppy=ppy,
+                            last_ts=last_ts,
+                            existing=population.get(family),
                         )
                     )
                     summary.n_evaluated += 1
                     summary.families.append(family)
                     if report.passed:
                         summary.n_passed += 1
-
         ledger.save()
-        champions = build_champions_from_population(
-            population, max_champions=max_champions, gross=gross
-        )
-        save_champions(settings.state_dir / "champions.json", champions)
-        summary.n_champions = len(champions.allocations)
     finally:
         population.close()
     return summary

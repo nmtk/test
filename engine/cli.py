@@ -21,6 +21,7 @@ from engine.data.store import OHLCVStore
 from engine.data.sync import sync_universe
 from engine.orchestration.champions import Allocation, Champions, save_champions
 from engine.orchestration.orchestrator import run_step
+from engine.orchestration.promotion import PromotionConfig, promote_step
 from engine.reporting import generate_report
 from engine.search.research import run_research
 from engine.strategies import all_strategies, all_xs_strategies, get_strategy
@@ -241,10 +242,20 @@ def _cmd_research(args: argparse.Namespace) -> int:
         symbols=args.symbol,
         timeframes=args.timeframe,
         trials=args.trials,
-        max_champions=args.max_champions,
     )
     print(
         f"research: evaluated={summary.n_evaluated} passed={summary.n_passed} "
+        f"(passed -> incubating; run `trade promote`)"
+    )
+    return 0
+
+
+def _cmd_promote(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    summary = promote_step(settings, cfg=PromotionConfig(max_champions=args.max_champions))
+    print(
+        f"promote: incubating={summary.n_incubating} promoted={summary.n_promoted} "
+        f"champions_checked={summary.n_champions_checked} retired={summary.n_retired} "
         f"champions={summary.n_champions}"
     )
     return 0
@@ -301,13 +312,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--mode", default="paper")
     p_report.set_defaults(func=_cmd_report)
 
-    p_research = sub.add_parser("research", help="search -> validate -> promote champions")
+    p_research = sub.add_parser("research", help="search -> validate -> incubate")
     p_research.add_argument("--strategy", action="append", help="archetype (repeatable)")
     p_research.add_argument("--symbol", action="append", help="symbol (repeatable)")
     p_research.add_argument("--timeframe", action="append", help="timeframe (repeatable)")
     p_research.add_argument("--trials", type=int, default=40, help="optuna trials per family")
-    p_research.add_argument("--max-champions", type=int, default=8)
     p_research.set_defaults(func=_cmd_research)
+
+    p_promote = sub.add_parser(
+        "promote", help="incubation/decay FSM: promote validated strategies, retire decayed"
+    )
+    p_promote.add_argument("--max-champions", type=int, default=8)
+    p_promote.set_defaults(func=_cmd_promote)
 
     p_val = sub.add_parser("validate", help="run the validation gate on a strategy family")
     p_val.add_argument("--strategy", required=True, help="strategy name (see list-strategies)")

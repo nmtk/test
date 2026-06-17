@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from engine.backtest import run_backtest
+from engine.backtest.metrics import max_drawdown
 from engine.validation.cpcv import cpcv_sharpes
 from engine.validation.ledger import TrialLedger
 from engine.validation.pbo import probability_of_backtest_overfitting
@@ -54,6 +55,13 @@ class ValidationReport:
     mintrl: float
     pbo: float
     spa_p: float
+    # Backtest reference stats (per-bar) the incubation/decay bands compare forward data to.
+    sharpe_per_bar: float = 0.0
+    mean_per_bar: float = 0.0
+    std_per_bar: float = 0.0
+    skew: float = 0.0
+    kurtosis: float = 3.0
+    max_drawdown: float = 0.0
     checks: dict[str, bool] = field(default_factory=dict)
     passed: bool = False
 
@@ -170,6 +178,12 @@ def evaluate_matrix(
         mintrl=mintrl,
         pbo=pbo,
         spa_p=spa_p,
+        sharpe_per_bar=moments.sharpe,
+        mean_per_bar=moments.mean,
+        std_per_bar=moments.std,
+        skew=moments.skew,
+        kurtosis=moments.kurtosis,
+        max_drawdown=max_drawdown((1.0 + best_returns).cumprod()),
         checks=checks,
         passed=all(checks.values()),
     )
