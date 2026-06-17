@@ -155,6 +155,26 @@ class PaperBroker(Broker):
             equity[currency] = equity.get(currency, 0.0) + pos.qty * marks.get(symbol, pos.avg)
         return equity
 
+    def snapshot(self) -> dict:
+        """Serializable account state (cash + open positions) for committing to disk."""
+        return {
+            "cash": dict(self.cash),
+            "positions": {
+                s: {"qty": p.qty, "avg": p.avg} for s, p in self._positions.items() if p.qty != 0.0
+            },
+            "realized_pnl": dict(self.realized_pnl),
+        }
+
+    def apply_state(self, snapshot: dict) -> None:
+        """Restore cash/positions from a previous :meth:`snapshot` (resume a paper run)."""
+        if snapshot.get("cash"):
+            self.cash = {k: float(v) for k, v in snapshot["cash"].items()}
+        self._positions = {
+            s: _Pos(qty=float(d["qty"]), avg=float(d["avg"]))
+            for s, d in snapshot.get("positions", {}).items()
+        }
+        self.realized_pnl = {k: float(v) for k, v in snapshot.get("realized_pnl", {}).items()}
+
     def _require_mark(self, symbol: str) -> float:
         mark = self._marks.get(symbol)
         if mark is None or mark <= 0.0:

@@ -13,10 +13,9 @@ def test_show_universe(capsys):
     assert "SPY" in out
 
 
-def test_stub_commands_exit_zero(capsys):
-    for cmd in ("paper-step", "research", "report"):
-        assert main([cmd]) == 0
-        assert "not implemented" in capsys.readouterr().out
+def test_research_stub_exits_zero(capsys):
+    assert main(["research"]) == 0
+    assert "not implemented" in capsys.readouterr().out
 
 
 def test_list_strategies_includes_archetypes(capsys):

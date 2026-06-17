@@ -1,14 +1,15 @@
 """Command-line entry point: ``trade <command>`` (also ``python -m engine``).
 
 Implemented: ``version``, ``show-universe``, ``sync-data``, ``list-strategies``,
-``backtest``, ``validate``. Stubs for later milestones: ``paper-step``/``report`` (M3),
-``research`` (M4/M5). Stubs exit 0 with a clear message so Makefile/E2E wiring works early.
+``backtest``, ``validate``, ``seed-champions``, ``paper-step``, ``report``. ``research``
+(M4/M5) remains a stub that exits 0 with a clear message.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -18,6 +19,9 @@ from engine.core.config import load_settings, load_universe
 from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
 from engine.data.sync import sync_universe
+from engine.orchestration.champions import Allocation, Champions, save_champions
+from engine.orchestration.orchestrator import run_step
+from engine.reporting import generate_report
 from engine.strategies import all_strategies, all_xs_strategies, get_strategy
 from engine.strategies.base import FloatParam, IntParam
 from engine.validation.gate import GateThresholds, evaluate_candidate_family
@@ -176,6 +180,58 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_seed_champions(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    universe = load_universe(settings.universe_path)
+    if args.symbol:
+        entries = [e for e in universe.entries if e.instrument.symbol in set(args.symbol)]
+    else:
+        entries = [e for e in universe.entries if e.instrument.asset_class is AssetClass.CRYPTO]
+    if not entries:
+        print("no matching instruments in universe")
+        return 1
+
+    params = _parse_params(args.param)
+    weight = args.weight if args.weight is not None else round(1.0 / len(entries), 4)
+    allocations = [
+        Allocation(
+            strategy=args.strategy,
+            symbol=e.instrument.symbol,
+            source=e.live_source.source,
+            timeframe=args.timeframe,
+            weight=weight,
+            params=params,
+        )
+        for e in entries
+    ]
+    champions = Champions(allocations=allocations, updated=datetime.now(UTC).isoformat())
+    path = settings.state_dir / "champions.json"
+    save_champions(path, champions)
+    print(f"seeded {len(allocations)} champions ({args.strategy} @ weight {weight}) -> {path}")
+    return 0
+
+
+def _cmd_paper_step(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    result = run_step(settings, mode=args.mode)
+    print(
+        f"[{result.mode}] bar_ts={result.bar_ts_ms} orders={result.n_orders} "
+        f"killed={result.killed} note={result.note}"
+    )
+    for cur, val in sorted(result.equity.items()):
+        print(f"  equity {cur}: {val:,.2f}")
+    for sym, qty in sorted(result.positions.items()):
+        print(f"  pos {sym}: {qty:.6g}")
+    return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    path = generate_report(settings, mode=args.mode)
+    print(f"wrote {path}")
+    return 0
+
+
 def _cmd_stub(name: str, milestone: str):
     def run(_args: argparse.Namespace) -> int:
         print(f"[{name}] not implemented yet (planned for {milestone})")
@@ -215,9 +271,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument("--slippage-bps", type=float, default=5.0)
     p_bt.set_defaults(func=_cmd_backtest)
 
-    sub.add_parser("paper-step", help="(M3) one paper executor step").set_defaults(
-        func=_cmd_stub("paper-step", "M3")
+    p_seed = sub.add_parser("seed-champions", help="bootstrap a champions.json to paper-trade")
+    p_seed.add_argument("--strategy", required=True, help="strategy name (see list-strategies)")
+    p_seed.add_argument(
+        "--symbol", action="append", help="symbol to include (repeatable; default: all crypto)"
     )
+    p_seed.add_argument("--timeframe", default="1h")
+    p_seed.add_argument(
+        "--weight", type=float, default=None, help="per-symbol weight (default 1/N)"
+    )
+    p_seed.add_argument("--param", action="append", help="strategy param, e.g. lookback=100")
+    p_seed.set_defaults(func=_cmd_seed_champions)
+
+    p_paper = sub.add_parser("paper-step", help="run one paper executor step")
+    p_paper.add_argument("--mode", default="paper")
+    p_paper.set_defaults(func=_cmd_paper_step)
+
+    p_report = sub.add_parser("report", help="generate the markdown status report")
+    p_report.add_argument("--mode", default="paper")
+    p_report.set_defaults(func=_cmd_report)
+
     sub.add_parser("research", help="(M4/M5) nightly search + GP discovery").set_defaults(
         func=_cmd_stub("research", "M4/M5")
     )
@@ -231,9 +304,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("--fee-bps", type=float, default=10.0)
     p_val.add_argument("--slippage-bps", type=float, default=5.0)
     p_val.set_defaults(func=_cmd_validate)
-    sub.add_parser("report", help="(M3) generate the markdown report").set_defaults(
-        func=_cmd_stub("report", "M3")
-    )
+
     return parser
 
 
