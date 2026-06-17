@@ -44,6 +44,15 @@ def test_genuine_edge_is_accepted():
     assert report.cpcv_median > 0.0
 
 
+def test_single_config_is_conservatively_overfit():
+    # A family of one can't be assessed for selection overfitting -> pbo defaults to 1.0
+    matrix = np.random.default_rng(0).normal(0.01, 0.01, size=(300, 1))
+    report = evaluate_matrix(matrix, ppy=365.0, n_trials=1)
+    assert report.pbo == 1.0
+    assert report.checks["pbo"] is False
+    assert report.passed is False
+
+
 def test_ledger_roundtrip(tmp_path):
     path = tmp_path / "trial_ledger.json"
     led = TrialLedger.load(path)

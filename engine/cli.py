@@ -1,8 +1,8 @@
 """Command-line entry point: ``trade <command>`` (also ``python -m engine``).
 
 Implemented: ``version``, ``show-universe``, ``sync-data``, ``list-strategies``,
-``backtest``, ``validate``, ``seed-champions``, ``paper-step``, ``report``. ``research``
-(M4/M5) remains a stub that exits 0 with a clear message.
+``backtest``, ``validate``, ``seed-champions``, ``paper-step``, ``report``, ``research``
+(parameter search; GP discovery arrives in M5).
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from engine.data.sync import sync_universe
 from engine.orchestration.champions import Allocation, Champions, save_champions
 from engine.orchestration.orchestrator import run_step
 from engine.reporting import generate_report
+from engine.search.research import run_research
 from engine.strategies import all_strategies, all_xs_strategies, get_strategy
 from engine.strategies.base import FloatParam, IntParam
 from engine.validation.gate import GateThresholds, evaluate_candidate_family
@@ -232,12 +233,21 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_stub(name: str, milestone: str):
-    def run(_args: argparse.Namespace) -> int:
-        print(f"[{name}] not implemented yet (planned for {milestone})")
-        return 0
-
-    return run
+def _cmd_research(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    summary = run_research(
+        settings,
+        strategies=tuple(args.strategy) if args.strategy else None,
+        symbols=args.symbol,
+        timeframes=args.timeframe,
+        trials=args.trials,
+        max_champions=args.max_champions,
+    )
+    print(
+        f"research: evaluated={summary.n_evaluated} passed={summary.n_passed} "
+        f"champions={summary.n_champions}"
+    )
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -291,9 +301,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--mode", default="paper")
     p_report.set_defaults(func=_cmd_report)
 
-    sub.add_parser("research", help="(M4/M5) nightly search + GP discovery").set_defaults(
-        func=_cmd_stub("research", "M4/M5")
-    )
+    p_research = sub.add_parser("research", help="search -> validate -> promote champions")
+    p_research.add_argument("--strategy", action="append", help="archetype (repeatable)")
+    p_research.add_argument("--symbol", action="append", help="symbol (repeatable)")
+    p_research.add_argument("--timeframe", action="append", help="timeframe (repeatable)")
+    p_research.add_argument("--trials", type=int, default=40, help="optuna trials per family")
+    p_research.add_argument("--max-champions", type=int, default=8)
+    p_research.set_defaults(func=_cmd_research)
 
     p_val = sub.add_parser("validate", help="run the validation gate on a strategy family")
     p_val.add_argument("--strategy", required=True, help="strategy name (see list-strategies)")

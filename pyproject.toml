@@ -14,12 +14,11 @@ dependencies = [
     "ccxt>=4.4",
     "alpaca-py>=0.33",
     "exchange-calendars>=4.5",
+    "optuna>=3.6",
 ]
 
-# NOTE: the heavy research stack (vectorbt, optuna, gplearn, river, hmmlearn,
-# arch, ...) is intentionally introduced in later milestones (M1/M2/M4/M5) as a
-# separate optional dependency group, to keep the M0 lock/install fast and
-# conflict-free. See the implementation plan.
+# NOTE: the remaining heavy research stack (gplearn for GP discovery, river/hmmlearn for
+# decay/regime detection) is introduced in later milestones (M5/M6) to keep installs fast.
 
 [dependency-groups]
 dev = [

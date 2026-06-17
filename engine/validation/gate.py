@@ -61,6 +61,26 @@ class ValidationReport:
         return asdict(self)
 
 
+def returns_for_configs(
+    bars: pd.DataFrame,
+    strategy_cls,
+    configs: list[dict],
+    *,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
+    ppy: float = 365.0,
+) -> np.ndarray:
+    """Backtest each config and stack per-bar returns into a (T x C) matrix."""
+    columns = []
+    for cfg in configs:
+        weights = strategy_cls(**cfg).weights(bars)
+        result = run_backtest(
+            bars["close"], weights, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
+        )
+        columns.append(result.returns.to_numpy(dtype=float))
+    return np.column_stack(columns)
+
+
 def build_returns_matrix(
     bars: pd.DataFrame,
     strategy_cls,
@@ -75,14 +95,10 @@ def build_returns_matrix(
     configs = [
         dict(zip(keys, values, strict=True)) for values in itertools.product(*param_grid.values())
     ]
-    columns = []
-    for cfg in configs:
-        weights = strategy_cls(**cfg).weights(bars)
-        result = run_backtest(
-            bars["close"], weights, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
-        )
-        columns.append(result.returns.to_numpy(dtype=float))
-    return np.column_stack(columns), configs
+    matrix = returns_for_configs(
+        bars, strategy_cls, configs, fee_bps=fee_bps, slippage_bps=slippage_bps, ppy=ppy
+    )
+    return matrix, configs
 
 
 def evaluate_matrix(
@@ -123,7 +139,13 @@ def evaluate_matrix(
     sr_star = expected_max_sharpe(sharpe_variance, trials)
     mintrl = min_track_record_length(moments.sharpe, moments.skew, moments.kurtosis, sr_star)
 
-    pbo = probability_of_backtest_overfitting(matrix, n_partitions=n_partitions).pbo
+    # PBO needs a family (>= 2 configs); a single config's selection can't be assessed, so
+    # treat it conservatively as fully overfit rather than crashing.
+    pbo = (
+        probability_of_backtest_overfitting(matrix, n_partitions=n_partitions).pbo
+        if c >= 2
+        else 1.0
+    )
     cpcv = cpcv_sharpes(best_returns, n_groups=cpcv_groups, n_test_groups=cpcv_test_groups, ppy=ppy)
     spa_p = spa_test(matrix, n_boot=spa_boot, seed=spa_seed).p_value
 
