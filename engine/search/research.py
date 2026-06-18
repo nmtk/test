@@ -26,6 +26,12 @@ from engine.validation.ledger import TrialLedger
 DEFAULT_ARCHETYPES = ("tsmom", "ma_cross", "donchian", "zscore_reversion")
 MIN_BARS = 300
 
+# GP is the most overfitting-prone generator (see docs/MANUAL.md §5), so it faces a
+# deliberately stricter gate than the parameter-search archetypes.
+GP_GATE = GateThresholds(
+    dsr_min=0.99, pbo_max=0.10, spa_max=0.02, min_oos_sharpe=0.0, min_pct_positive=0.55
+)
+
 
 @dataclass(slots=True)
 class ResearchSummary:
@@ -160,7 +166,7 @@ def run_research(
                         seed=seed,
                         fee_bps=fee_bps,
                         slippage_bps=slippage_bps,
-                        thresholds=thresholds,
+                        thresholds=GP_GATE,  # stricter than the archetype gate
                         ledger=ledger,
                         family=family,
                     )

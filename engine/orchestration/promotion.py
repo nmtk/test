@@ -27,6 +27,8 @@ from engine.data.store import OHLCVStore
 from engine.monitor.decay import page_hinkley, sharpe_lower_band
 from engine.orchestration.champions import Allocation, Champions, save_champions
 from engine.orchestration.population import Population
+from engine.portfolio.allocate import AllocationConfig, AllocInput, allocate
+from engine.portfolio.regime import RegimeConfig, exposure_scale
 from engine.strategies import get_strategy
 from engine.validation.stats import return_moments
 
@@ -42,6 +44,10 @@ class PromotionConfig:
     slippage_bps: float = 5.0
     max_champions: int = 8
     gross: float = 1.0
+
+
+# How many recent bars of forward returns to estimate allocation stats / correlations from.
+RECENT_ALLOC_BARS = 90
 
 
 @dataclass(slots=True)
@@ -117,28 +123,84 @@ def decay_detected(forward, ref: dict, cfg: PromotionConfig) -> list[str]:
     return reasons
 
 
+def _strategy_returns(store: OHLCVStore, record: dict, cfg: PromotionConfig):
+    """Full net-return series for a champion (used to estimate allocation stats)."""
+    bars = store.read(record["source"], record["symbol"], record["timeframe"])
+    if len(bars) < 2:
+        return None
+    ppy = float(record["metrics"].get("ppy", 365.0))
+    weights = get_strategy(record["strategy"])(**record["params"]).weights(bars)
+    result = run_backtest(
+        bars["close"],
+        weights,
+        fee_bps=cfg.fee_bps,
+        slippage_bps=cfg.slippage_bps,
+        periods_per_year=ppy,
+    )
+    return result.returns
+
+
 def allocate_champions(
-    population: Population, *, max_champions: int = 8, gross: float = 1.0
+    population: Population,
+    store: OHLCVStore,
+    *,
+    promo_cfg: PromotionConfig,
+    alloc_cfg: AllocationConfig | None = None,
+    regime_cfg: RegimeConfig | None = None,
+    recent_bars: int = RECENT_ALLOC_BARS,
 ) -> Champions:
-    """Build champions.json from champion-status rows (top-N by DSR, equal weight)."""
+    """Confidence-weighted, correlation-aware, regime-scaled allocation over champions."""
+    alloc_cfg = alloc_cfg or AllocationConfig()
+    regime_cfg = regime_cfg or RegimeConfig()
+
     champs = population.list("champion")
     champs.sort(
         key=lambda r: (r["metrics"].get("dsr", 0.0), r["metrics"].get("cpcv_median", 0.0)),
         reverse=True,
     )
-    selected = champs[:max_champions]
-    weight = round(gross / len(selected), 4) if selected else 0.0
-    allocations = [
-        Allocation(
-            strategy=r["strategy"],
-            symbol=r["symbol"],
-            source=r["source"],
-            timeframe=r["timeframe"],
-            weight=weight,
-            params=r["params"],
+    champs = champs[: promo_cfg.max_champions]
+
+    # Recent forward returns per champion -> allocation stats + correlation matrix.
+    recent: dict[str, np.ndarray] = {}
+    for rec in champs:
+        series = _strategy_returns(store, rec, promo_cfg)
+        if series is not None and len(series) >= 10:
+            recent[rec["family"]] = np.asarray(series.tail(recent_bars), dtype=float)
+    champs = [c for c in champs if c["family"] in recent]
+    if not champs:
+        return Champions(allocations=[], updated=datetime.now(UTC).isoformat())
+
+    length = min(len(recent[c["family"]]) for c in champs)
+    matrix = np.vstack([recent[c["family"]][-length:] for c in champs])
+    inputs = [
+        AllocInput(
+            family=c["family"],
+            vol=float(np.std(row, ddof=1)) if length > 1 else 0.0,
+            mean=float(np.mean(row)),
+            se=(float(np.std(row, ddof=1)) / np.sqrt(length)) if length > 1 else 0.0,
+            is_gp=(c["strategy"] == "gp"),
         )
-        for r in selected
+        for c, row in zip(champs, matrix, strict=True)
     ]
+    corr = (
+        np.nan_to_num(np.corrcoef(matrix), nan=0.0) if (len(champs) >= 2 and length >= 3) else None
+    )
+    weights = allocate(inputs, corr, alloc_cfg)
+
+    allocations = []
+    for c in champs:
+        bars = store.read(c["source"], c["symbol"], c["timeframe"])
+        scale = exposure_scale(bars["close"], regime_cfg) if len(bars) else 1.0
+        allocations.append(
+            Allocation(
+                strategy=c["strategy"],
+                symbol=c["symbol"],
+                source=c["source"],
+                timeframe=c["timeframe"],
+                weight=round(weights.get(c["family"], 0.0) * scale, 4),
+                params=c["params"],
+            )
+        )
     return Champions(allocations=allocations, updated=datetime.now(UTC).isoformat())
 
 
@@ -169,7 +231,7 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
                 population.update_fields(rec["family"], status="retired")
                 summary.n_retired += 1
 
-        champions = allocate_champions(population, max_champions=cfg.max_champions, gross=cfg.gross)
+        champions = allocate_champions(population, store, promo_cfg=cfg)
         save_champions(settings.state_dir / "champions.json", champions)
         summary.n_champions = len(champions.allocations)
     finally:

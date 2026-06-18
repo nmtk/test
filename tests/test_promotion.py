@@ -7,7 +7,6 @@ from engine.orchestration.champions import load_champions
 from engine.orchestration.population import Population, StrategyRecord
 from engine.orchestration.promotion import (
     PromotionConfig,
-    allocate_champions,
     decay_detected,
     incubation_passed,
     promote_step,
@@ -72,32 +71,7 @@ def test_decay_when_forward_collapses():
     assert "drawdown" in reasons
 
 
-# -- unit: allocation -------------------------------------------------------------------
-
-
-def test_allocate_champions_top_n_equal_weight(tmp_path):
-    pop = Population(tmp_path / "pop.db")
-    for i, dsr in enumerate([0.99, 0.80, 0.60]):
-        pop.upsert(
-            StrategyRecord(
-                family=f"tsmom:S{i}/JPY:1h",
-                strategy="tsmom",
-                symbol=f"S{i}/JPY",
-                source="bitbank",
-                timeframe="1h",
-                params={"lookback": 50},
-                status="champion",
-                metrics={"dsr": dsr, "cpcv_median": dsr},
-            )
-        )
-    champs = allocate_champions(pop, max_champions=2, gross=1.0)
-    assert len(champs.allocations) == 2
-    assert {a.symbol for a in champs.allocations} == {"S0/JPY", "S1/JPY"}
-    assert all(abs(a.weight - 0.5) < 1e-9 for a in champs.allocations)
-    pop.close()
-
-
-# -- FSM end-to-end ---------------------------------------------------------------------
+# -- FSM end-to-end (allocation is exercised here; unit-tested in test_portfolio) -------
 
 
 def _settings(tmp_path) -> Settings:
