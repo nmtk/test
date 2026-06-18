@@ -60,9 +60,10 @@ proof the validation actually works.
 
 ## Status
 
-Early scaffolding (milestone **M0**): project skeleton, the common `Broker` interface
-(bitbank + Alpaca + paper), and the data layer. See the milestones in the
-implementation plan. This is **not** investment advice and ships with **no warranty**.
+Milestones M0–M6 complete: data layer, backtester, validation gate, paper executor,
+parameter search, promotion/decay FSM, and GP alpha discovery. A plain-language operator's
+manual (data flow, pass/fail criteria, emergency stop) is in **[docs/MANUAL.md](docs/MANUAL.md)**.
+This is **not** investment advice and ships with **no warranty**.
 
 ## Local development
 
