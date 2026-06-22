@@ -159,6 +159,13 @@ def run_research(
 
                 if include_gp:
                     family = f"gp:{symbol}:{tf}"
+                    # HOF is persisted per family so each nightly run warm-starts from
+                    # the prior run's survivors, accumulating GP knowledge over time.
+                    hof_path = (
+                        settings.state_dir
+                        / "gp_hof"
+                        / f"{symbol.replace('/', '-')}_{tf}.json"
+                    )
                     report = discover_gp(
                         bars,
                         ppy=ppy,
@@ -169,6 +176,7 @@ def run_research(
                         thresholds=GP_GATE,  # stricter than the archetype gate
                         ledger=ledger,
                         family=family,
+                        hof_path=hof_path,
                     )
                     population.upsert(
                         _record_for(

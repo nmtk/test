@@ -35,6 +35,8 @@ jobs:
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
           ALPACA_PAPER: "true"
         run: uv run trade paper-step
+      - name: Report
+        run: uv run trade report
       - name: Commit state
         run: |
           git config user.name "trade-bot"

@@ -43,6 +43,8 @@ jobs:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
         run: uv run trade live-step
+      - name: Report
+        run: uv run trade report --mode live
       - name: Commit state
         run: |
           git config user.name "trade-bot"

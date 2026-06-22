@@ -1,8 +1,8 @@
 """Command-line entry point: ``trade <command>`` (also ``python -m engine``).
 
-Implemented: ``version``, ``show-universe``, ``sync-data``, ``list-strategies``,
-``backtest``, ``validate``, ``seed-champions``, ``paper-step``, ``report``, ``research``
-(parameter search; GP discovery arrives in M5).
+Commands: ``version``, ``status``, ``show-universe``, ``sync-data``, ``list-strategies``,
+``backtest``, ``validate``, ``seed-champions``, ``paper-step``, ``live-step``, ``report``,
+``research``, ``promote``.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import numpy as np
 from engine import __version__
 from engine.backtest import periods_per_year, run_backtest
 from engine.core.config import load_settings, load_universe
+from engine.core.killswitch import is_engaged
 from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
 from engine.data.sync import sync_universe
@@ -277,6 +278,89 @@ def _cmd_promote(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_status(_args: argparse.Namespace) -> int:
+    import json
+    import sqlite3
+    from datetime import timezone
+
+    settings = load_settings()
+    universe = load_universe(settings.universe_path)
+
+    print("=== trade system status ===")
+    ks = is_engaged(settings.state_dir)
+    print(f"kill_switch : {'ON  ← ALL EXECUTION HALTED' if ks else 'off'}")
+    print(f"live_enabled: {settings.live_enabled}")
+
+    # Trial count
+    ledger_path = settings.state_dir / "trial_ledger.json"
+    if ledger_path.exists():
+        try:
+            data = json.loads(ledger_path.read_text())
+            total = sum(data.values()) if isinstance(data, dict) else 0
+            print(f"trials      : {total:,} cumulative (raises DSR bar on each research run)")
+        except Exception:
+            pass
+
+    # Data freshness
+    store = OHLCVStore(settings.data_dir / "ohlcv")
+    print("\ndata freshness:")
+    for entry in universe.entries:
+        sym = entry.instrument.symbol
+        src = entry.live_source.source
+        for tf in entry.timeframes:
+            ts = store.last_ts(src, sym, tf)
+            if ts:
+                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%MZ"
+                )
+                bars = store.read(src, sym, tf)
+                print(f"  {src:<8} {sym:<10} {tf:<4}  last={dt}  bars={len(bars)}")
+            else:
+                print(f"  {src:<8} {sym:<10} {tf:<4}  (no data — run sync-data)")
+
+    # Population pipeline
+    db_path = settings.state_dir / "population.db"
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(db_path)
+            counts = {
+                row[0]: row[1]
+                for row in conn.execute(
+                    "SELECT status, COUNT(*) FROM strategies GROUP BY status"
+                ).fetchall()
+            }
+            conn.close()
+            print("\npopulation:")
+            for status in ("champion", "incubating", "candidate", "retired"):
+                n = counts.get(status, 0)
+                print(f"  {status:<12} {n}")
+        except Exception:
+            pass
+    else:
+        print("\npopulation: (no population.db — research has not run yet)")
+
+    # Current champions
+    from engine.orchestration.champions import load_champions
+
+    champs = load_champions(settings.state_dir / "champions.json")
+    print(f"\nchampions ({len(champs.allocations)}):")
+    if champs.allocations:
+        for a in champs.allocations:
+            print(f"  {a.strategy:<18} {a.symbol:<12} tf={a.timeframe}  weight={a.weight:+.4f}")
+    else:
+        print("  (none — waiting for incubation to complete)")
+
+    # Latest report
+    latest = settings.state_dir / "reports" / "latest.md"
+    if latest.exists():
+        mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
+        print(f"\nlatest report: {latest}  ({mtime:%Y-%m-%dT%H:%MZ})")
+    else:
+        print("\nlatest report: not yet written (executor-paper must run first)")
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trade", description="multi-asset trading research engine"
@@ -284,6 +368,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("version", help="print version").set_defaults(func=_cmd_version)
+    sub.add_parser(
+        "status", help="show system health: data freshness, pipeline, champions, kill switch"
+    ).set_defaults(func=_cmd_status)
     sub.add_parser("show-universe", help="print the configured universe").set_defaults(
         func=_cmd_show_universe
     )

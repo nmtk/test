@@ -1,8 +1,9 @@
 """Generate a markdown status report from committed executor state.
 
 Summarizes the current champions, positions, per-currency equity (with return and max
-drawdown from the equity ledger), and recent fills. Written to ``state/reports/latest.md``
-and a dated copy, so the report itself is a versioned artifact.
+drawdown from the equity ledger), recent fills, and the strategy pipeline (incubating /
+candidate counts). Written to ``state/reports/latest.md`` and a dated copy, so the
+report itself is a versioned artifact.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from engine.core.config import Settings
@@ -56,6 +58,73 @@ def _fills_section(path: Path, limit: int = 10) -> list[str]:
     return lines
 
 
+def _pipeline_section(state_dir: Path) -> list[str]:
+    """Show incubating strategies and candidate counts from population.db."""
+    db_path = state_dir / "population.db"
+    if not db_path.exists():
+        return ["_no population yet — research has not run_"]
+
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM strategies ORDER BY status, family").fetchall()
+        conn.close()
+    except Exception:
+        return ["_population.db unreadable_"]
+
+    import json
+
+    incubating = [r for r in rows if r["status"] == "incubating"]
+    candidates = [r for r in rows if r["status"] == "candidate"]
+    retired = [r for r in rows if r["status"] == "retired"]
+
+    out: list[str] = [
+        f"_incubating: {len(incubating)} | candidates: {len(candidates)} | "
+        f"retired: {len(retired)}_",
+        "",
+    ]
+    if not incubating:
+        out.append("_no strategies in incubation (research gate has rejected all so far)_")
+        return out
+
+    out += [
+        "| family | fwd_bars_needed | bt_sharpe | dsr | pbo |",
+        "|---|---|---|---|---|",
+    ]
+    for r in incubating:
+        metrics = json.loads(r["metrics"]) if isinstance(r["metrics"], str) else r["metrics"]
+        start_ts = r["incubation_start_ts"] or 0
+        start_dt = (
+            datetime.fromtimestamp(start_ts / 1000, tz=UTC).strftime("%Y-%m-%d")
+            if start_ts
+            else "?"
+        )
+        bt_sharpe = metrics.get("sharpe_annual", float("nan"))
+        dsr = metrics.get("dsr", float("nan"))
+        pbo = metrics.get("pbo", float("nan"))
+        out.append(
+            f"| {r['family']} | 60 fwd bars (since {start_dt}) | "
+            f"{bt_sharpe:.2f} | {dsr:.3f} | {pbo:.3f} |"
+        )
+    return out
+
+
+def _trial_count(state_dir: Path) -> str:
+    path = state_dir / "trial_ledger.json"
+    if not path.exists():
+        return "0"
+    import json
+
+    try:
+        data = json.loads(path.read_text())
+        total = sum(data.values()) if isinstance(data, dict) else 0
+        return f"{total:,}"
+    except Exception:
+        return "?"
+
+
 def generate_report(settings: Settings, mode: str = "paper") -> Path:
     champions = load_champions(settings.state_dir / "champions.json")
     account = state_io.load_account(state_io.account_path(settings.state_dir, mode))
@@ -63,7 +132,8 @@ def generate_report(settings: Settings, mode: str = "paper") -> Path:
     out: list[str] = [
         f"# trade — {mode} report",
         "",
-        f"_generated {datetime.now(UTC).isoformat()}_",
+        f"_generated {datetime.now(UTC).isoformat()} | "
+        f"cumulative trials: {_trial_count(settings.state_dir)}_",
         "",
         f"## Champions ({len(champions.allocations)})",
     ]
@@ -74,7 +144,7 @@ def generate_report(settings: Settings, mode: str = "paper") -> Path:
             for a in champions.allocations
         ]
     else:
-        out.append("_none — run `trade seed-champions` or wait for research (M4)_")
+        out.append("_none — waiting for a strategy to clear research → incubation → promotion_")
 
     positions = account.get("positions", {})
     out += ["", "## Positions"]
@@ -86,6 +156,7 @@ def generate_report(settings: Settings, mode: str = "paper") -> Path:
 
     out += ["", "## Equity", *_equity_section(state_io.equity_path(settings.state_dir, mode))]
     out += ["", "## Recent fills", *_fills_section(state_io.fills_path(settings.state_dir, mode))]
+    out += ["", "## Pipeline", *_pipeline_section(settings.state_dir)]
     out.append("")
 
     text = "\n".join(out)

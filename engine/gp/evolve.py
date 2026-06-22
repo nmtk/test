@@ -20,6 +20,7 @@ from engine.gp.program import (
     Node,
     clone,
     crossover,
+    deserialize,
     mutate,
     random_tree,
     serialize,
@@ -57,7 +58,12 @@ def _tournament(scored: list[tuple[Node, float]], rng: np.random.Generator, k: i
 
 
 def evolve(
-    bars: pd.DataFrame, *, ppy: float = 365.0, cfg: GPConfig | None = None, seed: int = 0
+    bars: pd.DataFrame,
+    *,
+    ppy: float = 365.0,
+    cfg: GPConfig | None = None,
+    seed: int = 0,
+    warm_start: list[tuple[list, float]] | None = None,
 ) -> EvolveResult:
     cfg = cfg or GPConfig()
     rng = np.random.default_rng(seed)
@@ -84,7 +90,21 @@ def evolve(
         cache[key] = value
         return value
 
-    population = [random_tree(rng, max_depth=cfg.max_depth) for _ in range(cfg.pop_size)]
+    if warm_start:
+        # Seed the population with survivors from the previous run, then fill randomly.
+        # Silently drop any programs that fail to deserialize (e.g. after operator changes).
+        warm_nodes: list[Node] = []
+        for prog, _ in warm_start:
+            try:
+                warm_nodes.append(deserialize(prog))
+            except Exception:
+                pass
+        n_warm = min(len(warm_nodes), cfg.pop_size)
+        population = warm_nodes[:n_warm] + [
+            random_tree(rng, max_depth=cfg.max_depth) for _ in range(cfg.pop_size - n_warm)
+        ]
+    else:
+        population = [random_tree(rng, max_depth=cfg.max_depth) for _ in range(cfg.pop_size)]
     scored = [(p, fit(p)) for p in population]
 
     for _ in range(cfg.generations):

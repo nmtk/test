@@ -4,9 +4,15 @@ Evolves a family of alpha programs, backtests the hall-of-fame into a returns ma
 runs it through the same gate. Every distinct program evaluated during evolution is counted
 in the trial ledger, so the Deflated Sharpe Ratio is deflated by the (large) number of GP
 trials — GP's extra overfitting risk is paid for honestly.
+
+Pass ``hof_path`` to persist the hall-of-fame across nightly runs. The next call will
+warm-start the population from the survivors, accumulating GP knowledge over time.
 """
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 import numpy as np
 
@@ -32,9 +38,24 @@ def discover_gp(
     thresholds: GateThresholds | None = None,
     ledger: TrialLedger | None = None,
     family: str | None = None,
+    hof_path: Path | None = None,
     **gate_kwargs,
 ) -> ValidationReport:
-    result: EvolveResult = evolve(bars, ppy=ppy, cfg=cfg, seed=seed)
+    # Load prior-run HOF to warm-start this run's population.
+    warm_start = None
+    if hof_path is not None and Path(hof_path).exists():
+        try:
+            warm_start = json.loads(Path(hof_path).read_text())
+        except Exception:
+            pass
+
+    result: EvolveResult = evolve(bars, ppy=ppy, cfg=cfg, seed=seed, warm_start=warm_start)
+
+    # Persist HOF so the next nightly run can continue from here.
+    if hof_path is not None:
+        Path(hof_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(hof_path).write_text(json.dumps(result.hall_of_fame))
+
     configs = [{"program": program} for program, _ in result.hall_of_fame]
     matrix = returns_for_configs(
         bars, GPStrategy, configs, fee_bps=fee_bps, slippage_bps=slippage_bps, ppy=ppy
