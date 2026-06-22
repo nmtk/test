@@ -2,8 +2,9 @@ name: executor-live
 
 # Job B: real-money execution. DISABLED by default. It runs only when the repository
 # variable LIVE_ENABLED == 'true' AND trade-only API keys are present as secrets. The
-# engine additionally refuses to trade if state/KILL_SWITCH exists. (Live execution is
-# implemented in M7; this is the gated scaffold.)
+# engine additionally refuses to trade unless TRADE_LIVE_ENABLED=true, caps deployment to a
+# small canary, and flattens+halts if state/KILL_SWITCH exists. First advances the
+# promotion/decay FSM, then runs the live step.
 
 on:
   schedule:
@@ -28,7 +29,12 @@ jobs:
           python-version: "3.11"
           enable-cache: true
       - run: uv sync
-      - name: Live step (gated)
+      - name: Promote (incubation/decay FSM)
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+        run: uv run trade promote
+      - name: Live step (gated, canary-capped)
         env:
           TRADE_LIVE_ENABLED: "true"
           ALPACA_PAPER: "false"
@@ -36,7 +42,7 @@ jobs:
           BITBANK_API_SECRET: ${{ secrets.BITBANK_API_SECRET }}
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
-        run: uv run trade paper-step  # placeholder until the live executor lands (M7)
+        run: uv run trade live-step
       - name: Commit state
         run: |
           git config user.name "trade-bot"

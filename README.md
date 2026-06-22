@@ -60,9 +60,10 @@ proof the validation actually works.
 
 ## Status
 
-Milestones M0–M6 complete: data layer, backtester, validation gate, paper executor,
-parameter search, promotion/decay FSM, and GP alpha discovery. A plain-language operator's
-manual (data flow, pass/fail criteria, emergency stop) is in **[docs/MANUAL.md](docs/MANUAL.md)**.
+Milestones M0–M8 complete: data layer, backtester, validation gate, paper executor,
+parameter search, promotion/decay FSM, GP alpha discovery, meta-allocation + regime scaling,
+and the canary-capped live path (OFF by default). A plain-language operator's manual (data
+flow, pass/fail criteria, emergency stop) is in **[docs/MANUAL.md](docs/MANUAL.md)**.
 This is **not** investment advice and ships with **no warranty**.
 
 ## Local development

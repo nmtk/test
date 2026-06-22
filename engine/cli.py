@@ -20,6 +20,7 @@ from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
 from engine.data.sync import sync_universe
 from engine.orchestration.champions import Allocation, Champions, save_champions
+from engine.orchestration.live import run_live_step
 from engine.orchestration.orchestrator import run_step
 from engine.orchestration.promotion import PromotionConfig, promote_step
 from engine.reporting import generate_report
@@ -227,6 +228,20 @@ def _cmd_paper_step(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_live_step(_args: argparse.Namespace) -> int:
+    settings = load_settings()
+    result = run_live_step(settings)
+    print(
+        f"[live] enabled={settings.live_enabled} bar_ts={result.bar_ts_ms} "
+        f"orders={result.n_orders} killed={result.killed} note={result.note}"
+    )
+    for cur, val in sorted(result.equity.items()):
+        print(f"  equity {cur}: {val:,.2f}")
+    for sym, qty in sorted(result.positions.items()):
+        print(f"  pos {sym}: {qty:.6g}")
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     settings = load_settings()
     path = generate_report(settings, mode=args.mode)
@@ -308,6 +323,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_paper = sub.add_parser("paper-step", help="run one paper executor step")
     p_paper.add_argument("--mode", default="paper")
     p_paper.set_defaults(func=_cmd_paper_step)
+
+    sub.add_parser(
+        "live-step", help="run one LIVE executor step (no-op unless live is enabled + keys set)"
+    ).set_defaults(func=_cmd_live_step)
 
     p_report = sub.add_parser("report", help="generate the markdown status report")
     p_report.add_argument("--mode", default="paper")
