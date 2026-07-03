@@ -1,0 +1,48 @@
+# Cross-asset context series — the "where is money flowing" inputs.
+#
+# These are research INPUTS the engine conditions on (risk-on/off, dollar liquidity,
+# rates, gold), never traded instruments. Job A (data-sync) fetches them daily from
+# keyless free sources into data/ohlcv/{source}/..., and engine/features/context.py
+# turns them into causal ctx_* features for the GP generator and the macro_flow
+# archetype.
+#
+# Schema
+#   series[]:
+#     key        feature namespace (ctx_{key}_mom / ctx_{key}_trend). Keys the feature
+#                layer understands are listed in engine.features.context.CONTEXT_KEYS —
+#                to add a NEW key, add it there too (one line) so GP picks it up.
+#     source     stooq | fred   (both free, no API key)
+#     symbol     source-native symbol
+#     timeframe  bar size (default 1d — macro data is daily)
+#
+# Point-in-time honesty: a daily close only becomes visible to target bars from the
+# next UTC day onward (close-time as-of join), so nothing here can leak the future.
+
+series:
+  # S&P 500 — global risk appetite. Crypto has traded as a high-beta risk asset
+  # since 2020; equity drawdowns pull money out of it.
+  - key: spx
+    source: stooq
+    symbol: "^spx"
+
+  # Gold — the flight-to-safety sink. Gold bid + stocks offered = risk-off.
+  - key: gold
+    source: stooq
+    symbol: "xauusd"
+
+  # US 10-year Treasury yield — the price of money. Falling yields (easing) have
+  # historically pushed money toward long-duration risk assets like crypto.
+  - key: us10y
+    source: stooq
+    symbol: "10yusy.b"
+
+  # USD/JPY — directly relevant: the live book is quoted in JPY on bitbank.
+  - key: usdjpy
+    source: stooq
+    symbol: "usdjpy"
+
+  # EUR/USD — combined with USD/JPY into the ctx_dollar_mom dollar-strength proxy
+  # (a strong dollar drains global liquidity from risk assets).
+  - key: eurusd
+    source: stooq
+    symbol: "eurusd"

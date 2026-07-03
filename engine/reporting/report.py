@@ -47,6 +47,15 @@ _DESCRIPTIONS: dict[str, tuple[str, str]] = {
         "ボリンジャーバンドと同じ発想。モメンタムと逆方向に張るため、レジーム依存が強い。"
         "パラメータ: `window`（移動平均期間）, `z`（発動閾値）",
     ),
+    "macro_flow": (
+        "マクロフロー・ゲート付きトレンド",
+        "対象銘柄のトレンドに乗るのは「資金が流れ込みやすい地合い」のときだけ、という戦略。"
+        "株式（S&P500）・金・米金利・ドル・BTC 市場全体・対 BTC 相対力などのクロスアセット"
+        "指標（ctx_* 特徴量、全て前日以前の確定値のみ使用）をゲートとして使い、"
+        "ゲート条件を満たす間だけトレンドシグナルでポジションを持つ。"
+        "パラメータ: `lookback`（トレンド期間）, `gate`（どの資金フロー指標か）, "
+        "`direction`（順方向/逆方向のどちらの仮説か）, `threshold`（発動閾値）",
+    ),
     "xs_momentum": (
         "横断モメンタム（クロスセクション）",
         "複数銘柄を横並びで比較し、相対的に強い銘柄を買い・弱い銘柄を売るドル中立戦略。"
@@ -55,8 +64,10 @@ _DESCRIPTIONS: dict[str, tuple[str, str]] = {
     ),
     "gp": (
         "GP 自動発見式（遺伝的プログラミング）",
-        "遺伝的プログラミングが価格・出来高特徴量（リターン・HL 幅・出来高 Z など）の"
-        "組み合わせを自動進化させて発見した実験的な数式。人間が設計したルールではない。"
+        "遺伝的プログラミングが特徴量の組み合わせを自動進化させて発見した実験的な数式。"
+        "特徴量は価格・出来高（リターン・HL 幅・出来高 Z など）に加え、クロスアセットの"
+        "資金フロー指標（S&P500・金・米金利・ドル・BTC 市場全体との相対関係などの ctx_* 系列）"
+        "も端子として使える。人間が設計したルールではない。"
         "過剰適合リスクが最も高いため、検証ゲートが特に厳格（DSR ≥ 0.99、PBO ≤ 0.10）。",
     ),
 }
@@ -128,8 +139,7 @@ def _pipeline_section(state_dir: Path) -> list[str]:
     retired = [r for r in rows if r["status"] == "retired"]
 
     out: list[str] = [
-        f"_incubating: {len(incubating)} | rejected: {len(candidates)} | "
-        f"retired: {len(retired)}_",
+        f"_incubating: {len(incubating)} | rejected: {len(candidates)} | retired: {len(retired)}_",
         "",
     ]
     if not incubating:
@@ -145,7 +155,8 @@ def _pipeline_section(state_dir: Path) -> list[str]:
         start_ts = r["incubation_start_ts"] or 0
         since = (
             datetime.fromtimestamp(start_ts / 1000, tz=UTC).strftime("%Y-%m-%d")
-            if start_ts else "?"
+            if start_ts
+            else "?"
         )
         out.append(
             f"| {r['family']} | {since} | "
@@ -180,7 +191,15 @@ def _performance_section(state_dir: Path) -> list[str]:
 
     out: list[str] = []
     # Show known archetypes first in a fixed order, then any unknowns.
-    order = ["tsmom", "ma_cross", "donchian", "zscore_reversion", "xs_momentum", "gp"]
+    order = [
+        "tsmom",
+        "ma_cross",
+        "donchian",
+        "zscore_reversion",
+        "macro_flow",
+        "xs_momentum",
+        "gp",
+    ]
     archetypes = order + [a for a in sorted(by_archetype) if a not in order]
 
     for archetype in archetypes:
@@ -262,10 +281,7 @@ def generate_report(settings: Settings, mode: str = "paper") -> Path:
     out += ["", "## Positions"]
     if positions:
         out += ["| symbol | qty | avg |", "|---|---|---|"]
-        out += [
-            f"| {s} | {d['qty']:.6g} | {d['avg']:.6g} |"
-            for s, d in sorted(positions.items())
-        ]
+        out += [f"| {s} | {d['qty']:.6g} | {d['avg']:.6g} |" for s, d in sorted(positions.items())]
     else:
         out.append("_flat_")
 

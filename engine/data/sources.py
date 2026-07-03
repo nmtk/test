@@ -197,8 +197,98 @@ class BinanceVisionSource:
         return df
 
 
+class StooqSource:
+    """Daily bars from stooq.com's free CSV endpoint (no API key).
+
+    Used for macro *context* series (equity indices, gold, yields, FX) — research inputs,
+    never traded. ``symbol`` is stooq-native, e.g. ``^spx``, ``xauusd``, ``10yusy.b``.
+    """
+
+    BASE = "https://stooq.com/q/d/l/"
+
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, since_ms: int | None = None, limit: int | None = None
+    ) -> pd.DataFrame:
+        import requests
+
+        if timeframe != "1d":
+            raise ValueError(f"stooq source only serves 1d bars, got {timeframe!r}")
+        resp = requests.get(self.BASE, params={"s": symbol, "i": "d"}, timeout=60)
+        resp.raise_for_status()
+        df = self._parse_csv(resp.text)
+        if since_ms is not None:
+            df = df[df["ts"] >= since_ms]
+        return normalize_ohlcv(df) if len(df) else empty_ohlcv()
+
+    @staticmethod
+    def _parse_csv(text: str) -> pd.DataFrame:
+        """Parse stooq CSV (``Date,Open,High,Low,Close[,Volume]``) to canonical OHLCV."""
+        raw = pd.read_csv(io.StringIO(text))
+        raw.columns = [c.strip().lower() for c in raw.columns]
+        if "date" not in raw.columns or "close" not in raw.columns:
+            return empty_ohlcv()  # e.g. "No data" body for an unknown symbol
+        out = pd.DataFrame()
+        out["ts"] = (
+            pd.to_datetime(raw["date"], utc=True).astype("datetime64[ms, UTC]").astype("int64")
+        )
+        for col in ("open", "high", "low", "close"):
+            source_col = col if col in raw.columns else "close"
+            out[col] = pd.to_numeric(raw[source_col], errors="coerce")
+        if "volume" in raw.columns:
+            out["volume"] = pd.to_numeric(raw["volume"], errors="coerce").fillna(0.0)
+        else:
+            out["volume"] = 0.0
+        return out.dropna(subset=["close"])
+
+
+class FredSource:
+    """Daily observations from FRED's keyless ``fredgraph.csv`` endpoint.
+
+    A fallback/alternative for context series (e.g. ``DGS10``). Values are levels, so
+    open=high=low=close and volume=0.
+    """
+
+    BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, since_ms: int | None = None, limit: int | None = None
+    ) -> pd.DataFrame:
+        import requests
+
+        if timeframe != "1d":
+            raise ValueError(f"fred source only serves 1d bars, got {timeframe!r}")
+        resp = requests.get(self.BASE, params={"id": symbol}, timeout=60)
+        resp.raise_for_status()
+        df = self._parse_csv(resp.text, symbol)
+        if since_ms is not None:
+            df = df[df["ts"] >= since_ms]
+        return normalize_ohlcv(df) if len(df) else empty_ohlcv()
+
+    @staticmethod
+    def _parse_csv(text: str, symbol: str) -> pd.DataFrame:
+        raw = pd.read_csv(io.StringIO(text))
+        raw.columns = [c.strip() for c in raw.columns]
+        date_col = next((c for c in raw.columns if c.upper() in ("DATE", "OBSERVATION_DATE")), None)
+        value_col = next((c for c in raw.columns if c != date_col), None)
+        if date_col is None or value_col is None:
+            return empty_ohlcv()
+        value = pd.to_numeric(raw[value_col], errors="coerce")  # missing prints are "."
+        out = pd.DataFrame()
+        out["ts"] = (
+            pd.to_datetime(raw[date_col], utc=True).astype("datetime64[ms, UTC]").astype("int64")
+        )
+        for col in ("open", "high", "low", "close"):
+            out[col] = value
+        out["volume"] = 0.0
+        return out.dropna(subset=["close"])
+
+
 def make_source(source: str, settings) -> BarSource:
     """Factory: map a universe source name to a concrete :class:`BarSource`."""
+    if source == "stooq":
+        return StooqSource()
+    if source == "fred":
+        return FredSource()
     if source == "bitbank":
         return CcxtSource(
             "bitbank",

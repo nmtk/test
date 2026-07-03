@@ -16,6 +16,13 @@ and **crypto (bitbank)** — one engine, multiple brokers.
 - **Evolving data = the strategy population.** Champions, challengers, and
   GP-discovered formulas are *data* the bot commits to `state/`. They evolve nightly;
   the code does not.
+- **Cross-asset context = the flow layer.** Free keyless macro series (S&P 500, gold,
+  US 10y, USD/JPY, EUR/USD via stooq/FRED) plus the BTC market factor are joined onto
+  every instrument's bars as causal `ctx_*` features, so both the GP generator and the
+  `macro_flow` archetype can condition on *where money is flowing between assets* —
+  risk-on/off, dollar liquidity, BTC→altcoin rotation — instead of one chart alone.
+  Rationale, operating cadence, and how to add new flow hypotheses:
+  **[docs/STRATEGY.md](docs/STRATEGY.md)**.
 
 Everything is designed to run at **zero infrastructure cost** on GitHub Actions of a
 public repo (compute, data, state, and notifications are all free). Both brokers are

@@ -18,6 +18,7 @@ from engine.core.types import AssetClass, Instrument, Venue
 from engine.data.store import OHLCVStore
 from engine.execution.broker import FeeModel, reconcile_orders
 from engine.execution.paper import PaperBroker
+from engine.features.context import ContextAugmenter
 from engine.orchestration import state as state_io
 from engine.orchestration.champions import load_champions
 from engine.orchestration.risk import RiskLimits, apply_limits
@@ -82,7 +83,9 @@ def run_step(
     acct_path = state_io.account_path(settings.state_dir, mode)
     broker.apply_state(state_io.load_account(acct_path))
 
-    # Latest closed-bar marks + aggregated target weight per symbol.
+    # Latest closed-bar marks + aggregated target weight per symbol. Bars get the same
+    # ctx_* context columns research validated on, so champions see identical features.
+    augmenter = ContextAugmenter.from_settings(settings, universe)
     marks: dict[str, float] = {}
     latest_ts = 0
     target_weights: dict[str, float] = defaultdict(float)
@@ -92,6 +95,9 @@ def run_step(
             continue
         marks[alloc.symbol] = float(bars["close"].iloc[-1])
         latest_ts = max(latest_ts, int(bars["ts"].iloc[-1]))
+        bars = augmenter.augment(
+            bars, source=alloc.source, symbol=alloc.symbol, timeframe=alloc.timeframe
+        )
         weight = float(get_strategy(alloc.strategy)(**alloc.params).weights(bars).iloc[-1])
         target_weights[alloc.symbol] += alloc.weight * weight
 

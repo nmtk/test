@@ -23,6 +23,7 @@ from engine.core.killswitch import is_engaged
 from engine.core.types import AssetClass, Venue
 from engine.data.store import OHLCVStore
 from engine.execution.broker import Broker, reconcile_orders
+from engine.features.context import ContextAugmenter
 from engine.orchestration import state as state_io
 from engine.orchestration.champions import load_champions
 from engine.orchestration.orchestrator import REBALANCE_BAND, StepResult, _resolve_instrument
@@ -69,6 +70,7 @@ def run_live_step(
     champions = load_champions(settings.state_dir / "champions.json")
     universe = load_universe(settings.universe_path)
     store = OHLCVStore(settings.data_dir / "ohlcv")
+    augmenter = ContextAugmenter.from_settings(settings, universe)
     instruments = {
         a.symbol: _resolve_instrument(a.symbol, a.source, universe) for a in champions.allocations
     }
@@ -89,7 +91,7 @@ def run_live_step(
         if broker is None:  # keys not configured for this venue
             continue
 
-        marks, ts, weights = _marks_and_weights(store, allocs)
+        marks, ts, weights = _marks_and_weights(store, allocs, augmenter)
         if not marks:
             continue
         latest_ts = max(latest_ts, ts)
@@ -138,7 +140,7 @@ def run_live_step(
     )
 
 
-def _marks_and_weights(store: OHLCVStore, allocs: list):
+def _marks_and_weights(store: OHLCVStore, allocs: list, augmenter: ContextAugmenter):
     marks: dict[str, float] = {}
     weights: dict[str, float] = defaultdict(float)
     latest_ts = 0
@@ -148,6 +150,9 @@ def _marks_and_weights(store: OHLCVStore, allocs: list):
             continue
         marks[alloc.symbol] = float(bars["close"].iloc[-1])
         latest_ts = max(latest_ts, int(bars["ts"].iloc[-1]))
+        bars = augmenter.augment(
+            bars, source=alloc.source, symbol=alloc.symbol, timeframe=alloc.timeframe
+        )
         w = float(get_strategy(alloc.strategy)(**alloc.params).weights(bars).iloc[-1])
         weights[alloc.symbol] += alloc.weight * w
     return marks, latest_ts, dict(weights)

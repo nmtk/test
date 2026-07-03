@@ -19,7 +19,8 @@ from engine.core.config import load_settings, load_universe
 from engine.core.killswitch import is_engaged
 from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
-from engine.data.sync import sync_universe
+from engine.data.sync import sync_context, sync_universe
+from engine.features.context import ContextAugmenter
 from engine.orchestration.champions import Allocation, Champions, save_champions
 from engine.orchestration.live import run_live_step
 from engine.orchestration.orchestrator import run_step
@@ -60,6 +61,7 @@ def _cmd_sync_data(args: argparse.Namespace) -> int:
     universe = load_universe(settings.universe_path)
     store = OHLCVStore(settings.data_dir / "ohlcv")
     results = sync_universe(settings, universe, store, include_research=args.research)
+    results.extend(sync_context(settings, store))
 
     failures = 0
     for r in results:
@@ -112,6 +114,8 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     if len(bars) == 0:
         print(f"no data for {source}:{args.symbol}:{args.timeframe} — run sync-data first")
         return 1
+    augmenter = ContextAugmenter.from_settings(settings, universe)
+    bars = augmenter.augment(bars, source=source, symbol=args.symbol, timeframe=args.timeframe)
 
     strategy = get_strategy(args.strategy)(**_parse_params(args.param))
     weights = strategy.weights(bars)
@@ -156,6 +160,8 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     if len(bars) == 0:
         print(f"no data for {source}:{args.symbol}:{args.timeframe} — run sync-data first")
         return 1
+    augmenter = ContextAugmenter.from_settings(settings, universe)
+    bars = augmenter.augment(bars, source=source, symbol=args.symbol, timeframe=args.timeframe)
 
     strategy_cls = get_strategy(args.strategy)
     grid = _grid_from_space(strategy_cls.param_space, n=args.grid)
@@ -281,7 +287,6 @@ def _cmd_promote(args: argparse.Namespace) -> int:
 def _cmd_status(_args: argparse.Namespace) -> int:
     import json
     import sqlite3
-    from datetime import timezone
 
     settings = load_settings()
     universe = load_universe(settings.universe_path)
@@ -310,9 +315,7 @@ def _cmd_status(_args: argparse.Namespace) -> int:
         for tf in entry.timeframes:
             ts = store.last_ts(src, sym, tf)
             if ts:
-                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%MZ"
-                )
+                dt = datetime.fromtimestamp(ts / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%MZ")
                 bars = store.read(src, sym, tf)
                 print(f"  {src:<8} {sym:<10} {tf:<4}  last={dt}  bars={len(bars)}")
             else:
@@ -353,7 +356,7 @@ def _cmd_status(_args: argparse.Namespace) -> int:
     # Latest report
     latest = settings.state_dir / "reports" / "latest.md"
     if latest.exists():
-        mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
+        mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=UTC)
         print(f"\nlatest report: {latest}  ({mtime:%Y-%m-%dT%H:%MZ})")
     else:
         print("\nlatest report: not yet written (executor-paper must run first)")
