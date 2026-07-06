@@ -108,3 +108,23 @@ def sync_universe(
         for spec in specs:
             results.extend(_sync_spec(store, client_for(spec.source), spec, entry.timeframes))
     return results
+
+
+def sync_context(settings: Settings, store: OHLCVStore) -> list[SyncResult]:
+    """Sync every configured cross-asset context series (macro flow inputs).
+
+    Reads ``strategies_config/context.yaml``; an absent file is simply "no context".
+    Same idempotent upsert path as instrument bars, stored under
+    ``data/ohlcv/{source}/{symbol}/{tf}.parquet``.
+    """
+    from engine.core.config import load_context_series
+
+    series = load_context_series(settings.context_path)
+    results: list[SyncResult] = []
+    source_cache: dict[str, object] = {}
+    for spec in series:
+        if spec.source not in source_cache:
+            source_cache[spec.source] = make_source(spec.source, settings)
+        data_spec = DataSourceSpec(source=spec.source, symbol=spec.symbol)
+        results.append(sync_series(store, source_cache[spec.source], data_spec, spec.timeframe))
+    return results

@@ -72,6 +72,10 @@ class Settings:
     def universe_path(self) -> Path:
         return self.config_dir / "universe.yaml"
 
+    @property
+    def context_path(self) -> Path:
+        return self.config_dir / "context.yaml"
+
 
 def load_settings(repo_root: Path | None = None) -> Settings:
     root = (repo_root or _find_repo_root()).resolve()
@@ -173,3 +177,40 @@ def load_universe(path: Path, default_timeframes: tuple[str, ...] = ("1h", "4h",
             )
         )
     return Universe(entries=tuple(entries))
+
+
+# --------------------------------------------------------------------------------------
+# Cross-asset context series (macro flow layer)
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSeries:
+    """One external series the flow layer conditions on (see engine/features/context.py).
+
+    ``key`` is the feature namespace (e.g. ``spx`` -> ``ctx_spx_mom``); ``source`` /
+    ``symbol`` say where to fetch it. Context series are research *inputs*, never traded.
+    """
+
+    key: str
+    source: str  # "stooq" | "fred"
+    symbol: str
+    timeframe: str = "1d"
+
+
+def load_context_series(path: Path) -> list[ContextSeries]:
+    """Load the context universe from YAML; a missing file just means no context."""
+    if not path.exists():
+        return []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    out: list[ContextSeries] = []
+    for item in raw.get("series", []):
+        out.append(
+            ContextSeries(
+                key=str(item["key"]),
+                source=str(item["source"]),
+                symbol=str(item["symbol"]),
+                timeframe=str(item.get("timeframe", "1d")),
+            )
+        )
+    return out

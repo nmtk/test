@@ -15,6 +15,7 @@ from engine.backtest import periods_per_year
 from engine.core.config import Settings, load_universe
 from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
+from engine.features.context import ContextAugmenter
 from engine.gp.evolve import GPConfig
 from engine.orchestration.population import Population, StrategyRecord
 from engine.search.gp_search import discover_gp
@@ -23,7 +24,7 @@ from engine.strategies import get_strategy
 from engine.validation.gate import GateThresholds
 from engine.validation.ledger import TrialLedger
 
-DEFAULT_ARCHETYPES = ("tsmom", "ma_cross", "donchian", "zscore_reversion")
+DEFAULT_ARCHETYPES = ("tsmom", "ma_cross", "donchian", "zscore_reversion", "macro_flow")
 MIN_BARS = 300
 
 # GP is the most overfitting-prone generator (see docs/MANUAL.md §5), so it faces a
@@ -105,6 +106,10 @@ def run_research(
 ) -> ResearchSummary:
     universe = load_universe(settings.universe_path)
     store = OHLCVStore(settings.data_dir / "ohlcv")
+    # Cross-asset context (macro + BTC market factor) is stamped onto every bar frame so
+    # both the archetype search and GP evolve over flow-conditional features. The paper
+    # and live executors apply the identical augmentation (see orchestrator/live).
+    augmenter = ContextAugmenter.from_settings(settings, universe)
     population = Population(settings.state_dir / "population.db")
     ledger = TrialLedger.load(settings.state_dir / "trial_ledger.json")
     thresholds = thresholds or GateThresholds()
@@ -123,6 +128,7 @@ def run_research(
                 bars = store.read(source, symbol, tf)
                 if len(bars) < min_bars:
                     continue
+                bars = augmenter.augment(bars, source=source, symbol=symbol, timeframe=tf)
                 ppy = periods_per_year(tf, entry.instrument.asset_class)
                 last_ts = int(bars["ts"].iloc[-1])
                 for strat_name in archetypes:
@@ -162,9 +168,7 @@ def run_research(
                     # HOF is persisted per family so each nightly run warm-starts from
                     # the prior run's survivors, accumulating GP knowledge over time.
                     hof_path = (
-                        settings.state_dir
-                        / "gp_hof"
-                        / f"{symbol.replace('/', '-')}_{tf}.json"
+                        settings.state_dir / "gp_hof" / f"{symbol.replace('/', '-')}_{tf}.json"
                     )
                     report = discover_gp(
                         bars,
