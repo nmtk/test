@@ -56,6 +56,16 @@ _DESCRIPTIONS: dict[str, tuple[str, str]] = {
         "パラメータ: `lookback`（トレンド期間）, `gate`（どの資金フロー指標か）, "
         "`direction`（順方向/逆方向のどちらの仮説か）, `threshold`（発動閾値）",
     ),
+    "ensemble": (
+        "アルファプール（分散合成）",
+        "単独ではゲートを通らない「惜しい」戦略群（各アーキタイプのベスト設定 + GP 殿堂入り）から、"
+        "互いに相関の低いものだけを残し、固定ウェイトで合成した1つの運用戦略。"
+        "個別シグナルのブレが打ち消し合うため、合成後のシャープは個々のメンバーを上回りやすい。"
+        "PBO が罰する「兄弟同士から1本を選ぶ」argmax 選抜そのものを廃止するのが狙い。"
+        "ゲート基準は他アーキタイプと同一で、DSR はメンバー系列の累積試行数まで引き継いで割り引く"
+        "（緩和ではなく厳格化）。"
+        "パラメータ: `members`（構成戦略と凍結ウェイト）, `k`（本数）, `weighting`（equal/inv_vol）",
+    ),
     "xs_momentum": (
         "横断モメンタム（クロスセクション）",
         "複数銘柄を横並びで比較し、相対的に強い銘柄を買い・弱い銘柄を売るドル中立戦略。"
@@ -199,6 +209,7 @@ def _performance_section(state_dir: Path) -> list[str]:
         "macro_flow",
         "xs_momentum",
         "gp",
+        "ensemble",
     ]
     archetypes = order + [a for a in sorted(by_archetype) if a not in order]
 

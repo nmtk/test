@@ -18,6 +18,7 @@ from engine.data.store import OHLCVStore
 from engine.features.context import ContextAugmenter
 from engine.gp.evolve import GPConfig
 from engine.orchestration.population import Population, StrategyRecord
+from engine.search.ensemble import discover_ensemble
 from engine.search.gp_search import discover_gp
 from engine.search.optuna_search import discover_challenger
 from engine.strategies import get_strategy
@@ -103,6 +104,7 @@ def run_research(
     min_bars: int = MIN_BARS,
     include_gp: bool = False,
     gp_config: GPConfig | None = None,
+    include_ensemble: bool = True,
 ) -> ResearchSummary:
     universe = load_universe(settings.universe_path)
     store = OHLCVStore(settings.data_dir / "ohlcv")
@@ -163,13 +165,13 @@ def run_research(
                     if report.passed:
                         summary.n_passed += 1
 
+                # HOF is persisted per family so each nightly run warm-starts from the
+                # prior run's survivors, accumulating GP knowledge over time. The alpha
+                # pool below also draws its GP members from here.
+                hof_path = settings.state_dir / "gp_hof" / f"{symbol.replace('/', '-')}_{tf}.json"
+
                 if include_gp:
                     family = f"gp:{symbol}:{tf}"
-                    # HOF is persisted per family so each nightly run warm-starts from
-                    # the prior run's survivors, accumulating GP knowledge over time.
-                    hof_path = (
-                        settings.state_dir / "gp_hof" / f"{symbol.replace('/', '-')}_{tf}.json"
-                    )
                     report = discover_gp(
                         bars,
                         ppy=ppy,
@@ -199,6 +201,46 @@ def run_research(
                     summary.families.append(family)
                     if report.passed:
                         summary.n_passed += 1
+
+                if include_ensemble:
+                    # The alpha pool: combine tonight's best archetype configs + the GP
+                    # hall of fame into fixed-weight pool variants and gate the family.
+                    # Individually-rejected members are allowed in — the pool is judged
+                    # as its own family, with the members' trial counts inherited into
+                    # its DSR deflation (see engine/search/ensemble.py).
+                    family = f"ensemble:{symbol}:{tf}"
+                    report = discover_ensemble(
+                        bars,
+                        population=population,
+                        symbol=symbol,
+                        timeframe=tf,
+                        archetypes=archetypes,
+                        hof_path=hof_path,
+                        ppy=ppy,
+                        fee_bps=fee_bps,
+                        slippage_bps=slippage_bps,
+                        thresholds=thresholds,
+                        ledger=ledger,
+                        family=family,
+                    )
+                    if report is not None:
+                        population.upsert(
+                            _record_for(
+                                report,
+                                family=family,
+                                strat_name="ensemble",
+                                symbol=symbol,
+                                source=source,
+                                tf=tf,
+                                ppy=ppy,
+                                last_ts=last_ts,
+                                existing=population.get(family),
+                            )
+                        )
+                        summary.n_evaluated += 1
+                        summary.families.append(family)
+                        if report.passed:
+                            summary.n_passed += 1
         ledger.save()
     finally:
         population.close()

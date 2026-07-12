@@ -15,17 +15,24 @@
 #     symbol     source-native symbol
 #     timeframe  bar size (default 1d — macro data is daily)
 #
+# Source note: FRED (fredgraph.csv, US-government hosted) is the primary source — it
+# serves datacenter IPs like GitHub Actions runners reliably, which stooq does not
+# (stooq answered 404 to every runner request; see docs/STRATEGY.md). Only series FRED
+# doesn't carry (gold) stay on stooq, and the feature layer degrades them to neutral
+# 0.0 whenever the fetch fails.
+#
 # Point-in-time honesty: a daily close only becomes visible to target bars from the
 # next UTC day onward (close-time as-of join), so nothing here can leak the future.
 
 series:
   # S&P 500 — global risk appetite. Crypto has traded as a high-beta risk asset
-  # since 2020; equity drawdowns pull money out of it.
+  # since 2020; equity drawdowns pull money out of it. (FRED carries ~10y of history.)
   - key: spx
-    source: stooq
-    symbol: "^spx"
+    source: fred
+    symbol: "SP500"
 
   # Gold — the flight-to-safety sink. Gold bid + stocks offered = risk-off.
+  # (No active daily gold series on FRED, so this stays on stooq best-effort.)
   - key: gold
     source: stooq
     symbol: "xauusd"
@@ -33,16 +40,17 @@ series:
   # US 10-year Treasury yield — the price of money. Falling yields (easing) have
   # historically pushed money toward long-duration risk assets like crypto.
   - key: us10y
-    source: stooq
-    symbol: "10yusy.b"
+    source: fred
+    symbol: "DGS10"
 
-  # USD/JPY — directly relevant: the live book is quoted in JPY on bitbank.
+  # USD/JPY (JPY per USD, H.10 noon rate) — directly relevant: the live book is
+  # quoted in JPY on bitbank.
   - key: usdjpy
-    source: stooq
-    symbol: "usdjpy"
+    source: fred
+    symbol: "DEXJPUS"
 
-  # EUR/USD — combined with USD/JPY into the ctx_dollar_mom dollar-strength proxy
-  # (a strong dollar drains global liquidity from risk assets).
+  # EUR/USD (USD per EUR) — combined with USD/JPY into the ctx_dollar_mom
+  # dollar-strength proxy (a strong dollar drains global liquidity from risk assets).
   - key: eurusd
-    source: stooq
-    symbol: "eurusd"
+    source: fred
+    symbol: "DEXUSEU"

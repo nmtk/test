@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from engine.gp.features import build_features
-from engine.gp.fitness import fitness
+from engine.gp.fitness import fitness, program_weights
 from engine.gp.program import (
     Node,
     clone,
@@ -25,6 +25,26 @@ from engine.gp.program import (
     random_tree,
     serialize,
 )
+
+
+def max_abs_correlation(candidate: np.ndarray, accepted: list[np.ndarray]) -> float:
+    """Largest |corr| between ``candidate`` and any series in ``accepted``.
+
+    Constant series carry no rank information: two constants count as perfectly
+    correlated (duplicates), a constant against a varying series as uncorrelated.
+    """
+    highest = 0.0
+    c_std = float(np.std(candidate))
+    for other in accepted:
+        o_std = float(np.std(other))
+        if c_std == 0.0 or o_std == 0.0:
+            corr = 1.0 if c_std == 0.0 and o_std == 0.0 else 0.0
+        else:
+            corr = abs(float(np.corrcoef(candidate, other)[0, 1]))
+            if not np.isfinite(corr):
+                corr = 0.0
+        highest = max(highest, corr)
+    return highest
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +57,10 @@ class GPConfig:
     p_mutation: float = 0.2
     elitism: int = 2
     hall_of_fame: int = 12
+    # Two programs whose position streams correlate above this are the same alpha; the
+    # HOF keeps only the fitter one so the family (and the ensemble built from it)
+    # holds *complementary* signals rather than clones of the champion.
+    hof_corr_cap: float = 0.95
     complexity_penalty: float = 0.002
     turnover_penalty: float = 0.25
     cpcv_groups: int = 6
@@ -125,11 +149,17 @@ def evolve(
     scored.sort(key=lambda x: x[1], reverse=True)
     hof: list[tuple[list, float]] = []
     seen: set[str] = set()
+    accepted_weights: list[np.ndarray] = []
     for node, value in scored:
         key = json.dumps(serialize(node))
         if key in seen:
             continue
         seen.add(key)
+        weights = program_weights(node, features).to_numpy(dtype=float)
+        weights = np.nan_to_num(weights, nan=0.0, posinf=0.0, neginf=0.0)
+        if max_abs_correlation(weights, accepted_weights) > cfg.hof_corr_cap:
+            continue  # same alpha as a fitter member — keep scanning for diversity
+        accepted_weights.append(weights)
         hof.append((serialize(node), value))
         if len(hof) >= cfg.hall_of_fame:
             break

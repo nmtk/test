@@ -56,6 +56,29 @@ def test_fred_parse_drops_missing_prints():
     assert df["close"].tolist() == [4.28, 4.31]
 
 
+def test_stooq_fetch_sends_browser_user_agent(monkeypatch):
+    # stooq 404s the default python-requests agent (observed on every Actions run),
+    # so the fetch must present a browser User-Agent.
+    captured = {}
+
+    class _Resp:
+        text = STOOQ_CSV
+
+        def raise_for_status(self):
+            pass
+
+    import requests
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["headers"] = headers or {}
+        return _Resp()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    df = StooqSource().fetch_ohlcv("xauusd", "1d")
+    assert len(df) == 3
+    assert "Mozilla" in captured["headers"].get("User-Agent", "")
+
+
 def test_make_source_knows_context_sources():
     settings = load_settings()
     assert isinstance(make_source("stooq", settings), StooqSource)
@@ -69,6 +92,13 @@ def test_context_yaml_loads_series():
     assert {"spx", "gold", "us10y", "usdjpy", "eurusd"} <= keys
     assert all(s.timeframe == "1d" for s in series)
     assert all(s.source in ("stooq", "fred") for s in series)
+    # FRED is primary (Actions-reachable): only gold, which FRED lacks, stays on stooq.
+    by_key = {s.key: s for s in series}
+    assert by_key["spx"].source == "fred" and by_key["spx"].symbol == "SP500"
+    assert by_key["us10y"].source == "fred" and by_key["us10y"].symbol == "DGS10"
+    assert by_key["usdjpy"].source == "fred" and by_key["usdjpy"].symbol == "DEXJPUS"
+    assert by_key["eurusd"].source == "fred" and by_key["eurusd"].symbol == "DEXUSEU"
+    assert by_key["gold"].source == "stooq"
 
 
 class _StubSource:
@@ -109,7 +139,9 @@ def test_sync_context_writes_and_is_idempotent(tmp_path, monkeypatch):
     assert len(first) == 5
     assert all(r.ok for r in first)
     assert all(r.rows_total == 5 for r in first)
-    assert store.exists("stooq", "^spx", "1d")
+    # FRED is the primary source (stooq 404s GitHub Actions runners); gold stays stooq.
+    assert store.exists("fred", "SP500", "1d")
+    assert store.exists("stooq", "xauusd", "1d")
 
     second = sync_context(settings, store)  # re-run converges, never duplicates
     assert all(r.ok and r.rows_total == 5 for r in second)
