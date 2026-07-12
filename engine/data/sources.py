@@ -205,6 +205,14 @@ class StooqSource:
     """
 
     BASE = "https://stooq.com/q/d/l/"
+    # stooq answers 404 to non-browser agents (the default python-requests UA gets
+    # rejected on datacenter IPs like Actions runners), so present a browser UA.
+    HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+        )
+    }
 
     def fetch_ohlcv(
         self, symbol: str, timeframe: str, since_ms: int | None = None, limit: int | None = None
@@ -213,7 +221,9 @@ class StooqSource:
 
         if timeframe != "1d":
             raise ValueError(f"stooq source only serves 1d bars, got {timeframe!r}")
-        resp = requests.get(self.BASE, params={"s": symbol, "i": "d"}, timeout=60)
+        resp = requests.get(
+            self.BASE, params={"s": symbol, "i": "d"}, headers=self.HEADERS, timeout=60
+        )
         resp.raise_for_status()
         df = self._parse_csv(resp.text)
         if since_ms is not None:

@@ -27,8 +27,9 @@ def _falling(n=300):
     return _bars(list(100.0 * (0.99 ** np.arange(n))))
 
 
-# "gp" requires an evolved program argument; it is covered in the GP test modules.
-@pytest.mark.parametrize("name", [n for n in all_strategies() if n != "gp"])
+# "gp" needs an evolved program and "ensemble" needs a member list; both are covered
+# in their own test modules.
+@pytest.mark.parametrize("name", [n for n in all_strategies() if n not in ("gp", "ensemble")])
 def test_weights_are_bounded_and_aligned(name):
     bars = _rising()
     w = get_strategy(name)().weights(bars)

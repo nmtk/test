@@ -18,6 +18,7 @@ from engine.strategies.base import (
 )
 from engine.strategies.breakout import DonchianBreakout
 from engine.strategies.cross_sectional import CrossSectionalMomentum
+from engine.strategies.ensemble import EnsembleStrategy
 from engine.strategies.macro_flow import MacroFlowTrend
 from engine.strategies.mean_reversion import ZScoreReversion
 from engine.strategies.momentum import MovingAverageCross, TimeSeriesMomentum
@@ -36,5 +37,6 @@ __all__ = [
     "DonchianBreakout",
     "ZScoreReversion",
     "CrossSectionalMomentum",
+    "EnsembleStrategy",
     "MacroFlowTrend",
 ]
