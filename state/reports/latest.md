@@ -1,6 +1,6 @@
 # trade — paper report
 
-_generated 2026-08-06T12:09:32.993134+00:00 | cumulative trials: 274,374_
+_generated 2026-08-06T15:22:45.199832+00:00 | cumulative trials: 274,374_
 
 ## Champions (0)
 _none — waiting for a strategy to clear research → incubation → promotion_
@@ -11,8 +11,8 @@ _flat_
 ## Equity
 | currency | start | current | return | max_dd | points |
 |---|---|---|---|---|---|
-| JPY | 1,000,000 | 1,000,000 | +0.00% | 0.00% | 458 |
-| USD | 10,000 | 10,000 | +0.00% | 0.00% | 458 |
+| JPY | 1,000,000 | 1,000,000 | +0.00% | 0.00% | 459 |
+| USD | 10,000 | 10,000 | +0.00% | 0.00% | 459 |
 
 ## Recent fills
 _no fills yet_
