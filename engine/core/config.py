@@ -196,6 +196,10 @@ class ContextSeries:
     source: str  # "stooq" | "fred"
     symbol: str
     timeframe: str = "1d"
+    # Days between the END of the observation period and publication. Only meaningful for
+    # released statistics (trade data); market prices are known instantly and leave it
+    # None. See engine/features/macro_trade.py for why this must not be omitted there.
+    release_lag_days: int | None = None
 
 
 def load_context_series(path: Path) -> list[ContextSeries]:
@@ -211,6 +215,9 @@ def load_context_series(path: Path) -> list[ContextSeries]:
                 source=str(item["source"]),
                 symbol=str(item["symbol"]),
                 timeframe=str(item.get("timeframe", "1d")),
+                release_lag_days=(
+                    int(item["release_lag_days"]) if "release_lag_days" in item else None
+                ),
             )
         )
     return out

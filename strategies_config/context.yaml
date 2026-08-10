@@ -54,3 +54,42 @@ series:
   - key: eurusd
     source: fred
     symbol: "DEXUSEU"
+
+  # --- Trade-flow statistics (monthly, RELEASED data) --------------------------------
+  #
+  # These drive the `trade_balance` USD/JPY archetype via engine/features/macro_trade.py.
+  # They are NOT market prices: each observation describes a month that already ended and
+  # is published weeks later, so every one carries `release_lag_days`, measured from the
+  # END of the observation period. FRED stamps observations with the period start, so
+  # joining on that stamp would leak 1-2 months of the future into every backtest.
+  # The lags below are deliberately later than the true release dates — being late costs
+  # a little edge, being early invents it.
+  #
+  # A retired/renamed FRED id degrades these features to neutral 0.0 and the strategy
+  # stays flat; `trade macro-status` reports which series actually synced.
+
+  # US Census bilateral goods trade with Japan (FT-900, ~5th business day of M+2).
+  - key: us_exports
+    source: fred
+    symbol: "EXPJP"
+    timeframe: "1mo"
+    release_lag_days: 40
+
+  - key: us_imports
+    source: fred
+    symbol: "IMPJP"
+    timeframe: "1mo"
+    release_lag_days: 40
+
+  # Japan total goods trade (財務省貿易統計 via OECD/FRED; preliminary ~20th of M+1).
+  - key: jp_exports
+    source: fred
+    symbol: "XTEXVA01JPM667S"
+    timeframe: "1mo"
+    release_lag_days: 25
+
+  - key: jp_imports
+    source: fred
+    symbol: "XTIMVA01JPM667S"
+    timeframe: "1mo"
+    release_lag_days: 25

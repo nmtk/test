@@ -56,6 +56,48 @@ def _cmd_show_universe(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_macro_status(_args: argparse.Namespace) -> int:
+    """Report which trade-flow series actually synced, and when each became public.
+
+    The ``trade_balance`` archetype degrades to flat when its inputs are missing, which is
+    safe but silent. This makes the silence visible: a retired FRED id shows up here as a
+    missing series rather than as a strategy that mysteriously never trades.
+    """
+    import pandas as pd
+
+    from engine.core.config import load_context_series
+    from engine.features.macro_trade import TRADE_KEYS, availability_ts
+
+    settings = load_settings()
+    store = OHLCVStore(settings.data_dir / "ohlcv")
+    series = [s for s in load_context_series(settings.context_path) if s.key in TRADE_KEYS]
+    if not series:
+        print("no trade-flow series configured in context.yaml")
+        return 0
+
+    print("=== trade-flow (macro) series ===")
+    print(f"{'key':<12} {'symbol':<18} {'rows':>6} {'latest period':<15} {'public since':<15}")
+    missing = 0
+    for spec in series:
+        df = store.read(spec.source, spec.symbol, spec.timeframe)
+        if len(df) == 0:
+            missing += 1
+            print(f"{spec.key:<12} {spec.symbol:<18} {'-':>6} {'MISSING — check the FRED id':<31}")
+            continue
+        last_ts = df["ts"].iloc[-1:]
+        period = pd.Timestamp(int(last_ts.iloc[0]), unit="ms", tz="UTC").date()
+        public = pd.Timestamp(
+            int(availability_ts(last_ts, spec.release_lag_days or 0).iloc[0]), unit="ms", tz="UTC"
+        ).date()
+        print(f"{spec.key:<12} {spec.symbol:<18} {len(df):>6} {str(period):<15} {str(public):<15}")
+
+    if missing:
+        print(
+            f"\n{missing} series missing — trade_balance features read neutral and it stays flat."
+        )
+    return 0
+
+
 def _cmd_sync_data(args: argparse.Namespace) -> int:
     settings = load_settings()
     universe = load_universe(settings.universe_path)
@@ -374,6 +416,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "status", help="show system health: data freshness, pipeline, champions, kill switch"
     ).set_defaults(func=_cmd_status)
+    sub.add_parser(
+        "macro-status", help="show which trade-flow series synced and when each went public"
+    ).set_defaults(func=_cmd_macro_status)
     sub.add_parser("show-universe", help="print the configured universe").set_defaults(
         func=_cmd_show_universe
     )

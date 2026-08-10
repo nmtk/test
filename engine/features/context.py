@@ -226,6 +226,7 @@ class ContextAugmenter:
     series: list[ContextSeries]
     market_by_source: dict[str, str]  # data source -> BTC symbol on that source
     _frames: dict[str, pd.DataFrame] | None = None
+    _trade: tuple[dict[str, pd.DataFrame], dict[str, int]] | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings, universe: Universe | None = None):
@@ -253,10 +254,34 @@ class ContextAugmenter:
                     self._frames[spec.key] = df
         return self._frames
 
+    def _trade_frames(self) -> tuple[dict[str, pd.DataFrame], dict[str, int]]:
+        """Load the released-statistics series (trade data) and their publication lags."""
+        from engine.features.macro_trade import TRADE_KEYS
+
+        if self._trade is None:
+            frames: dict[str, pd.DataFrame] = {}
+            lags: dict[str, int] = {}
+            for spec in self.series:
+                if spec.key not in TRADE_KEYS:
+                    continue
+                df = self.store.read(spec.source, spec.symbol, spec.timeframe)
+                if len(df):
+                    frames[spec.key] = df
+                    if spec.release_lag_days is not None:
+                        lags[spec.key] = spec.release_lag_days
+            self._trade = (frames, lags)
+        return self._trade
+
     def augment(
         self, bars: pd.DataFrame, *, source: str, symbol: str, timeframe: str
     ) -> pd.DataFrame:
-        """Return ``bars`` plus every ``ctx_*`` column (neutral where data is missing)."""
+        """Return ``bars`` plus every ``ctx_*`` and ``mac_*`` column.
+
+        Both feature families are stamped here, by one object used identically by
+        research, the paper executor, and the live executor — so a strategy validated on
+        them sees exactly the same inputs in production. Missing data is neutral, never an
+        error.
+        """
         if len(bars) == 0:
             return bars
         market_symbol = self.market_by_source.get(source)
@@ -274,4 +299,13 @@ class ContextAugmenter:
         out = bars.copy()
         for col in ctx.columns:
             out[col] = ctx[col]
+
+        from engine.features.macro_trade import build_trade_features
+
+        trade_frames, trade_lags = self._trade_frames()
+        trade = build_trade_features(
+            bars, timeframe=timeframe, frames=trade_frames, lags=trade_lags
+        )
+        for col in trade.columns:
+            out[col] = trade[col]
         return out

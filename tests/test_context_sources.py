@@ -90,8 +90,15 @@ def test_context_yaml_loads_series():
     series = load_context_series(settings.context_path)
     keys = {s.key for s in series}
     assert {"spx", "gold", "us10y", "usdjpy", "eurusd"} <= keys
-    assert all(s.timeframe == "1d" for s in series)
     assert all(s.source in ("stooq", "fred") for s in series)
+    # Market prices are daily and known instantly; released statistics are monthly and
+    # must declare a publication lag (see engine/features/macro_trade.py).
+    for spec in series:
+        if spec.timeframe == "1d":
+            assert spec.release_lag_days is None, f"{spec.key} is a price, not a release"
+        else:
+            assert spec.timeframe == "1mo"
+            assert spec.release_lag_days and spec.release_lag_days > 0, spec.key
     # FRED is primary (Actions-reachable): only gold, which FRED lacks, stays on stooq.
     by_key = {s.key: s for s in series}
     assert by_key["spx"].source == "fred" and by_key["spx"].symbol == "SP500"
@@ -125,7 +132,7 @@ def test_sync_context_writes_and_is_idempotent(tmp_path, monkeypatch):
         repo_root=base.repo_root,
         data_dir=tmp_path / "data",
         state_dir=tmp_path / "state",
-        config_dir=base.config_dir,  # real context.yaml (5 series)
+        config_dir=base.config_dir,  # the real context.yaml
         live_enabled=False,
         alpaca_paper=True,
         bitbank=base.bitbank,
@@ -135,13 +142,16 @@ def test_sync_context_writes_and_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(sync_mod, "make_source", lambda source, s: stub)
 
     store = OHLCVStore(settings.data_dir / "ohlcv")
+    configured = load_context_series(settings.context_path)
     first = sync_context(settings, store)
-    assert len(first) == 5
+    assert len(first) == len(configured)
     assert all(r.ok for r in first)
     assert all(r.rows_total == 5 for r in first)
     # FRED is the primary source (stooq 404s GitHub Actions runners); gold stays stooq.
     assert store.exists("fred", "SP500", "1d")
     assert store.exists("stooq", "xauusd", "1d")
+    # Released statistics land under their own timeframe key, not mixed in with prices.
+    assert store.exists("fred", "EXPJP", "1mo")
 
     second = sync_context(settings, store)  # re-run converges, never duplicates
     assert all(r.ok and r.rows_total == 5 for r in second)

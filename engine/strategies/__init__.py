@@ -22,6 +22,8 @@ from engine.strategies.ensemble import EnsembleStrategy
 from engine.strategies.macro_flow import MacroFlowTrend
 from engine.strategies.mean_reversion import ZScoreReversion
 from engine.strategies.momentum import MovingAverageCross, TimeSeriesMomentum
+from engine.strategies.trade_balance import TradeBalanceUsdJpy
+from engine.strategies.wemof import WemofReversal
 
 __all__ = [
     "Strategy",
@@ -39,4 +41,6 @@ __all__ = [
     "CrossSectionalMomentum",
     "EnsembleStrategy",
     "MacroFlowTrend",
+    "WemofReversal",
+    "TradeBalanceUsdJpy",
 ]
