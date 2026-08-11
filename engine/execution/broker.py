@@ -21,6 +21,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from engine.core.types import (
+    AssetClass,
     Balance,
     Instrument,
     Order,
@@ -80,11 +81,38 @@ class FeeModel:
 
 
 # Venue fee defaults (see plan): bitbank maker -0.02% / taker 0.12%; Alpaca commission-free.
+# OANDA's retail pricing carries no commission — the whole cost is the bid/ask spread, so
+# it belongs in slippage, measured from tick data (see engine/data/dukascopy.py) rather
+# than assumed here.
 FEE_MODELS: dict[Venue, FeeModel] = {
     Venue.BITBANK: FeeModel(maker_bps=-2.0, taker_bps=12.0),
     Venue.ALPACA: FeeModel(maker_bps=0.0, taker_bps=0.0),
+    Venue.OANDA: FeeModel(maker_bps=0.0, taker_bps=0.0),
     Venue.PAPER: FeeModel(maker_bps=0.0, taker_bps=0.0),
 }
+
+
+# Research/backtest cost assumptions per asset class, as (fee_bps, slippage_bps) charged on
+# each unit of traded weight. These are *not* the same thing as FEE_MODELS above: that
+# table is what a venue charges, this one is what a backtest should assume before a venue
+# is even chosen.
+#
+# The split matters. Crypto pays a real taker fee on top of a wide book. Spot FX pays no
+# commission at all — the entire cost is the bid/ask spread, and on USD/JPY that is roughly
+# 0.2-0.5 pips on a ~150 price, i.e. ~0.15-0.35bps. Charging crypto's 15bps to an FX
+# strategy overstates its costs by an order of magnitude and rejects edges that are really
+# there; measure the true figure per instrument with
+# :func:`engine.data.dukascopy.spread_stats_bps` and override when it is known.
+RESEARCH_COSTS_BPS: dict[AssetClass, tuple[float, float]] = {
+    AssetClass.CRYPTO: (10.0, 5.0),
+    AssetClass.EQUITY: (0.0, 5.0),
+    AssetClass.FX: (0.0, 1.0),
+}
+
+
+def research_costs(asset_class: AssetClass) -> tuple[float, float]:
+    """``(fee_bps, slippage_bps)`` to assume for ``asset_class`` when backtesting."""
+    return RESEARCH_COSTS_BPS.get(asset_class, RESEARCH_COSTS_BPS[AssetClass.CRYPTO])
 
 
 def make_client_order_id(prefix: str, symbol: str, bar_ts_ms: int, target_qty: float) -> str:

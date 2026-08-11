@@ -3,10 +3,14 @@
 # Schema
 #   timeframes: default bar sizes for every instrument (overridable per instrument)
 #   instruments[]:
-#     symbol       canonical symbol ("BTC/JPY" crypto / "AAPL" equity)
-#     asset_class  crypto | equity
-#     venue        bitbank | alpaca   (execution venue; implies the live data source)
+#     symbol       canonical symbol ("BTC/JPY" crypto / "AAPL" equity / "USD/JPY" fx)
+#     asset_class  crypto | equity | fx
+#     venue        bitbank | alpaca | oanda   (execution venue; implies the data source)
 #     base/quote   optional currency hints (defaults: crypto JPY, equity USD)
+#     timeframes   optional per-instrument override of the file-level timeframes
+#     data         optional override of the bar source implied by `venue`
+#       source     dukascopy | stooq | fred | ...
+#       symbol     source-native symbol
 #     research     optional deep-history source for R&D (re-validated on the live venue)
 #       source     binance | alpaca
 #       symbol     source-native symbol ("BTC/USDT")
@@ -53,3 +57,26 @@ instruments:
     asset_class: equity
     venue: alpaca
     quote: USD
+
+  # --- Spot FX (OANDA execution; Dukascopy free ticks for bars) ----------------------
+  #
+  # USD/JPY is the asset the `wemof` and `trade_balance` archetypes were written for.
+  # See docs/STRATEGY.md: on daily bars the gate needs a ~30,858-bar track record before
+  # WEMOF's Sharpe is distinguishable from luck, which is why this carries a 5m timeframe
+  # — three years of 5m is ~225,000 bars, the regime where that is satisfiable.
+  #
+  # `data` overrides the venue's feed on purpose: Dukascopy is keyless, so bars sync and
+  # research runs with no broker credentials at all. OANDA is used only to place orders,
+  # and `_default_factory` returns no broker when its keys are unset — so an unconfigured
+  # deployment researches USD/JPY and trades nothing.
+  #
+  # 1h and 1d are derived from 5m by resampling (see DERIVE_SOURCES in engine/data/sync.py).
+  - symbol: "USD/JPY"
+    asset_class: fx
+    venue: oanda
+    base: USD
+    quote: JPY
+    timeframes: ["5m", "1h", "1d"]
+    size_step: 1.0        # v20 takes integer units of the base currency
+    min_size: 1.0
+    data: { source: dukascopy, symbol: "USD/JPY" }

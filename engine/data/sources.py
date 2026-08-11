@@ -297,6 +297,14 @@ def make_source(source: str, settings) -> BarSource:
     """Factory: map a universe source name to a concrete :class:`BarSource`."""
     if source == "stooq":
         return StooqSource()
+    if source == "dukascopy":
+        from engine.data.dukascopy import DukascopySource
+
+        return DukascopySource()
+    if source == "oanda":
+        from engine.execution.brokers.oanda import OandaBroker
+
+        return OandaBroker.from_settings(settings)
     if source == "fred":
         return FredSource()
     if source == "bitbank":

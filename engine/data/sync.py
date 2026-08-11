@@ -26,7 +26,10 @@ from engine.data.store import OHLCVStore
 _DEFAULT_SEED_DAYS = 365 * 3
 
 # Sources whose higher timeframes are derived from the base timeframe by resampling.
-DERIVE_SOURCES = {"bitbank"}
+# Dukascopy is here for a different reason than bitbank: it serves one file per
+# instrument-hour, so fetching 5m, 1h and 1d natively would triple an already large
+# request budget for data that is identical after resampling.
+DERIVE_SOURCES = {"bitbank", "dukascopy"}
 
 
 @dataclass(slots=True)

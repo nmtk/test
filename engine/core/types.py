@@ -24,12 +24,15 @@ from enum import StrEnum
 class AssetClass(StrEnum):
     CRYPTO = "crypto"
     EQUITY = "equity"
+    FX = "fx"
 
 
 class Venue(StrEnum):
     BITBANK = "bitbank"
     ALPACA = "alpaca"
+    OANDA = "oanda"
     BINANCE = "binance"  # research data source only (not an execution venue here)
+    DUKASCOPY = "dukascopy"  # research data source only (free historical FX ticks)
     PAPER = "paper"
 
 

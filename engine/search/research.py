@@ -15,6 +15,7 @@ from engine.backtest import periods_per_year
 from engine.core.config import Settings, load_universe
 from engine.core.types import AssetClass
 from engine.data.store import OHLCVStore
+from engine.execution.broker import research_costs
 from engine.features.context import ContextAugmenter
 from engine.gp.evolve import GPConfig
 from engine.orchestration.population import Population, StrategyRecord
@@ -42,9 +43,16 @@ class ResearchSummary:
     families: list[str] = field(default_factory=list)
 
 
-def _metrics(report, ppy: float) -> dict:
-    """Validation outcome + backtest reference stats the incubation/decay bands compare to."""
+def _metrics(report, ppy: float, fee_bps: float = 10.0, slippage_bps: float = 5.0) -> dict:
+    """Validation outcome + backtest reference stats the incubation/decay bands compare to.
+
+    The cost assumption is recorded alongside the stats so the promotion FSM judges forward
+    performance against the *same* costs the gate validated under. Without that, an FX
+    champion validated at 1bps would be re-measured at crypto's 15bps and look decayed.
+    """
     return {
+        "fee_bps": fee_bps,
+        "slippage_bps": slippage_bps,
         "dsr": report.dsr,
         "pbo": report.pbo,
         "spa_p": report.spa_p,
@@ -63,9 +71,22 @@ def _metrics(report, ppy: float) -> dict:
     }
 
 
-def _record_for(report, *, family, strat_name, symbol, source, tf, ppy, last_ts, existing):
+def _record_for(
+    report,
+    *,
+    family,
+    strat_name,
+    symbol,
+    source,
+    tf,
+    ppy,
+    last_ts,
+    existing,
+    fee_bps=10.0,
+    slippage_bps=5.0,
+):
     """Decide the population row for a discovery, preserving a still-valid champion."""
-    metrics = _metrics(report, ppy)
+    metrics = _metrics(report, ppy, fee_bps=fee_bps, slippage_bps=slippage_bps)
     base = dict(
         family=family,
         strategy=strat_name,
@@ -98,8 +119,10 @@ def run_research(
     timeframes: list[str] | None = None,
     trials: int = 40,
     thresholds: GateThresholds | None = None,
-    fee_bps: float = 10.0,
-    slippage_bps: float = 5.0,
+    # None = use the per-asset-class research assumption (see broker.RESEARCH_COSTS_BPS).
+    # Charging crypto's fees to an FX strategy would reject real edges out of hand.
+    fee_bps: float | None = None,
+    slippage_bps: float | None = None,
     seed: int = 0,
     min_bars: int = MIN_BARS,
     include_gp: bool = False,
@@ -119,11 +142,24 @@ def run_research(
 
     summary = ResearchSummary()
     try:
-        for entry in universe.by_asset_class(AssetClass.CRYPTO):
+        # Crypto and spot FX. Equities are excluded because Alpaca's free IEX feed only
+        # backfills from the day keys are issued, so there is rarely enough history to
+        # clear the gate; FX has three years of free tick history from bar one.
+        researchable = [
+            *universe.by_asset_class(AssetClass.CRYPTO),
+            *universe.by_asset_class(AssetClass.FX),
+        ]
+        for entry in researchable:
             symbol = entry.instrument.symbol
             if symbols and symbol not in symbols:
                 continue
             source = entry.live_source.source
+            asset_class = entry.instrument.asset_class
+            entry_fee, entry_slip = research_costs(asset_class)
+            if fee_bps is not None:
+                entry_fee = fee_bps
+            if slippage_bps is not None:
+                entry_slip = slippage_bps
             for tf in entry.timeframes:
                 if timeframes and tf not in timeframes:
                     continue
@@ -131,7 +167,7 @@ def run_research(
                 if len(bars) < min_bars:
                     continue
                 bars = augmenter.augment(bars, source=source, symbol=symbol, timeframe=tf)
-                ppy = periods_per_year(tf, entry.instrument.asset_class)
+                ppy = periods_per_year(tf, asset_class)
                 last_ts = int(bars["ts"].iloc[-1])
                 for strat_name in archetypes:
                     family = f"{strat_name}:{symbol}:{tf}"
@@ -140,8 +176,8 @@ def run_research(
                         get_strategy(strat_name),
                         n_trials=trials,
                         ppy=ppy,
-                        fee_bps=fee_bps,
-                        slippage_bps=slippage_bps,
+                        fee_bps=entry_fee,
+                        slippage_bps=entry_slip,
                         seed=seed,
                         thresholds=thresholds,
                         ledger=ledger,
@@ -158,6 +194,8 @@ def run_research(
                             ppy=ppy,
                             last_ts=last_ts,
                             existing=population.get(family),
+                            fee_bps=entry_fee,
+                            slippage_bps=entry_slip,
                         )
                     )
                     summary.n_evaluated += 1
@@ -177,8 +215,8 @@ def run_research(
                         ppy=ppy,
                         cfg=gp_config,
                         seed=seed,
-                        fee_bps=fee_bps,
-                        slippage_bps=slippage_bps,
+                        fee_bps=entry_fee,
+                        slippage_bps=entry_slip,
                         thresholds=GP_GATE,  # stricter than the archetype gate
                         ledger=ledger,
                         family=family,
@@ -195,6 +233,8 @@ def run_research(
                             ppy=ppy,
                             last_ts=last_ts,
                             existing=population.get(family),
+                            fee_bps=entry_fee,
+                            slippage_bps=entry_slip,
                         )
                     )
                     summary.n_evaluated += 1
@@ -217,8 +257,8 @@ def run_research(
                         archetypes=archetypes,
                         hof_path=hof_path,
                         ppy=ppy,
-                        fee_bps=fee_bps,
-                        slippage_bps=slippage_bps,
+                        fee_bps=entry_fee,
+                        slippage_bps=entry_slip,
                         thresholds=thresholds,
                         ledger=ledger,
                         family=family,

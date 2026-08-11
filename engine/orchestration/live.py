@@ -32,8 +32,18 @@ from engine.strategies import get_strategy
 
 # Tiny default canary caps (deployable capital per venue, in the venue's quote currency).
 # Staged rollout = raise these by hand once paper + canary look healthy.
-DEFAULT_CANARY: dict[Venue, float] = {Venue.BITBANK: 10_000.0, Venue.ALPACA: 100.0}
-_QUOTE_BY_VENUE: dict[Venue, str] = {Venue.BITBANK: "JPY", Venue.ALPACA: "USD"}
+DEFAULT_CANARY: dict[Venue, float] = {
+    Venue.BITBANK: 10_000.0,
+    Venue.ALPACA: 100.0,
+    # FX is leveraged, so the canary is expressed in the same account currency but sized
+    # for a minimum-lot USD/JPY trade rather than a fraction of an equity.
+    Venue.OANDA: 100.0,
+}
+_QUOTE_BY_VENUE: dict[Venue, str] = {
+    Venue.BITBANK: "JPY",
+    Venue.ALPACA: "USD",
+    Venue.OANDA: "USD",
+}
 
 
 def _default_factory(venue: Venue, instruments: dict, settings: Settings) -> Broker | None:
@@ -48,6 +58,10 @@ def _default_factory(venue: Venue, instruments: dict, settings: Settings) -> Bro
         return AlpacaBroker(
             settings.alpaca.api_key, settings.alpaca.api_secret, paper=settings.alpaca_paper
         )
+    if venue is Venue.OANDA and settings.oanda.is_configured:
+        from engine.execution.brokers.oanda import OandaBroker
+
+        return OandaBroker.from_settings(settings)
     return None
 
 

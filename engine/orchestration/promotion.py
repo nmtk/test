@@ -59,6 +59,21 @@ class PromotionSummary:
     n_champions: int = 0
 
 
+def _record_costs(record: dict, cfg: PromotionConfig) -> tuple[float, float]:
+    """The cost assumption this strategy was validated under, falling back to ``cfg``.
+
+    Forward performance must be judged against the same costs the gate used, or an FX
+    strategy validated at ~1bps gets re-measured at crypto's 15bps and is retired as
+    "decayed" when nothing about it changed. Records written before costs were tracked
+    simply fall back to the config defaults.
+    """
+    metrics = record.get("metrics") or {}
+    return (
+        float(metrics.get("fee_bps", cfg.fee_bps)),
+        float(metrics.get("slippage_bps", cfg.slippage_bps)),
+    )
+
+
 def forward_returns(store: OHLCVStore, record: dict, cfg: PromotionConfig, start_ts: int):
     """Recompute the strategy's net returns on bars strictly after ``start_ts`` (forward/OOS)."""
     bars = store.read(record["source"], record["symbol"], record["timeframe"])
@@ -66,11 +81,12 @@ def forward_returns(store: OHLCVStore, record: dict, cfg: PromotionConfig, start
         return None
     ppy = float(record["metrics"].get("ppy", 365.0))
     weights = get_strategy(record["strategy"])(**record["params"]).weights(bars)
+    fee_bps, slippage_bps = _record_costs(record, cfg)
     result = run_backtest(
         bars["close"],
         weights,
-        fee_bps=cfg.fee_bps,
-        slippage_bps=cfg.slippage_bps,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
         periods_per_year=ppy,
     )
     mask = (bars["ts"] > start_ts).to_numpy()
@@ -130,11 +146,12 @@ def _strategy_returns(store: OHLCVStore, record: dict, cfg: PromotionConfig):
         return None
     ppy = float(record["metrics"].get("ppy", 365.0))
     weights = get_strategy(record["strategy"])(**record["params"]).weights(bars)
+    fee_bps, slippage_bps = _record_costs(record, cfg)
     result = run_backtest(
         bars["close"],
         weights,
-        fee_bps=cfg.fee_bps,
-        slippage_bps=cfg.slippage_bps,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
         periods_per_year=ppy,
     )
     return result.returns

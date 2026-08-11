@@ -67,6 +67,10 @@ class Settings:
     alpaca_paper: bool
     bitbank: BrokerCredentials
     alpaca: BrokerCredentials
+    # OANDA (spot FX). ``api_key`` is the v20 API token, ``api_secret`` the account id —
+    # the pair the adapter needs, kept in the same shape as the other venues.
+    oanda: BrokerCredentials = BrokerCredentials(None, None)
+    oanda_practice: bool = True
 
     @property
     def universe_path(self) -> Path:
@@ -96,6 +100,13 @@ def load_settings(repo_root: Path | None = None) -> Settings:
             api_key=os.environ.get("ALPACA_API_KEY"),
             api_secret=os.environ.get("ALPACA_API_SECRET"),
         ),
+        oanda=BrokerCredentials(
+            api_key=os.environ.get("OANDA_API_TOKEN"),
+            api_secret=os.environ.get("OANDA_ACCOUNT_ID"),
+        ),
+        # Practice unless explicitly turned off — reaching real money needs this AND
+        # TRADE_LIVE_ENABLED, so one stray variable is never enough.
+        oanda_practice=_env_bool("OANDA_PRACTICE", default=True),
     )
 
 
@@ -131,6 +142,7 @@ class Universe:
 _DEFAULT_SOURCE_BY_VENUE = {
     Venue.BITBANK: "bitbank",
     Venue.ALPACA: "alpaca",
+    Venue.OANDA: "oanda",
 }
 
 
@@ -158,9 +170,13 @@ def load_universe(path: Path, default_timeframes: tuple[str, ...] = ("1h", "4h",
             min_notional=float(item.get("min_notional", 0.0)),
         )
         timeframes = tuple(item.get("timeframes") or file_timeframes)
+        # Bars default to the execution venue's own feed, but an instrument may override
+        # it: spot FX bars come from a free keyless source, so the engine can research and
+        # paper-trade USD/JPY without any broker credentials configured at all.
+        data = item.get("data") or {}
         live_source = DataSourceSpec(
-            source=_DEFAULT_SOURCE_BY_VENUE[venue],
-            symbol=item["symbol"],
+            source=data.get("source") or _DEFAULT_SOURCE_BY_VENUE[venue],
+            symbol=data.get("symbol") or item["symbol"],
         )
         research_source = None
         if "research" in item and item["research"]:

@@ -2,8 +2,8 @@
 
 An automated trading system that does **not** rely on a single fixed strategy.
 Its core is a *research engine with a rigorous validation gate*: it continuously
-searches for, validates, and rotates strategies across **US equities (Alpaca)**
-and **crypto (bitbank)** — one engine, multiple brokers.
+searches for, validates, and rotates strategies across **US equities (Alpaca)**,
+**crypto (bitbank)**, and **spot FX (OANDA)** — one engine, multiple brokers.
 
 > **Honest premise:** there is no single "most profitable" strategy, and any known
 > edge decays as it gets crowded. The only durable approach is a *factory that keeps
@@ -25,8 +25,10 @@ and **crypto (bitbank)** — one engine, multiple brokers.
   **[docs/STRATEGY.md](docs/STRATEGY.md)**.
 
 Everything is designed to run at **zero infrastructure cost** on GitHub Actions of a
-public repo (compute, data, state, and notifications are all free). Both brokers are
-pure-REST, so no always-on server is required. Git itself is the shared state bus and
+public repo (compute, data, state, and notifications are all free). Every broker is
+pure-REST, so no always-on server is required. FX bars come from Dukascopy's free
+keyless tick feed, so USD/JPY research runs with **no** broker credentials at all —
+OANDA keys are needed only to place orders. Git itself is the shared state bus and
 audit log: every champion change, fill, and research run is a reviewable commit.
 
 ### Jobs (GitHub Actions workflows)

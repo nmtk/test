@@ -12,16 +12,22 @@ from engine.core.types import AssetClass
 _SECONDS_PER_DAY = 86_400
 _EQUITY_SESSION_SECONDS = 6.5 * 3600  # NYSE regular session
 _EQUITY_SESSIONS_PER_YEAR = 252
+# Spot FX runs continuously from Sunday 22:00 UTC to Friday 22:00 UTC — five 24h days a
+# week, so ~260 full days a year rather than crypto's 365 or the equity session's 6.5h.
+_FX_DAYS_PER_YEAR = 260
 
 
 def periods_per_year(timeframe: str, asset_class: AssetClass) -> float:
     """Number of bars per year, used to annualize Sharpe/vol/return.
 
-    Crypto trades continuously; equities only during ~252 sessions of ~6.5h.
+    Crypto trades continuously; equities only during ~252 sessions of ~6.5h; spot FX
+    around the clock on weekdays.
     """
     sec = timeframe_seconds(timeframe)
     if asset_class is AssetClass.CRYPTO:
         return 365 * _SECONDS_PER_DAY / sec
+    if asset_class is AssetClass.FX:
+        return _FX_DAYS_PER_YEAR * _SECONDS_PER_DAY / sec
     if sec >= _SECONDS_PER_DAY:
         return _EQUITY_SESSIONS_PER_YEAR * _SECONDS_PER_DAY / sec
     return _EQUITY_SESSIONS_PER_YEAR * _EQUITY_SESSION_SECONDS / sec
