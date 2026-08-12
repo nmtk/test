@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from engine.core.clock import timeframe_seconds
 from engine.core.config import DataSourceSpec, Settings, Universe
 from engine.data.resample import resample_ohlcv
-from engine.data.sources import make_source
+from engine.data.sources import FULL_SERIES_SOURCES, make_source
 from engine.data.store import OHLCVStore
 
 # How far back to seed history on the very first sync of a series (live venue).
@@ -75,7 +75,7 @@ def sync_series(
     of it — the far larger of the two errors, but not the only one.
     """
     try:
-        if timeframe in FULL_REFETCH_TIMEFRAMES:
+        if timeframe in FULL_REFETCH_TIMEFRAMES or spec.source in FULL_SERIES_SOURCES:
             since = None
         else:
             last = store.last_ts(spec.source, spec.symbol, timeframe)

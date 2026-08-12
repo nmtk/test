@@ -235,14 +235,19 @@ def test_monthly_series_are_fetched_whole_not_incrementally(tmp_path):
     assert source.since_values == [None, None]
 
 
-def test_daily_bars_still_sync_incrementally(tmp_path):
-    """Price bars keep the incremental path — re-fetching years of them every run is waste."""
+def test_paginated_bars_sync_incrementally_and_advance(tmp_path):
+    """Paginated venues keep the incremental path and move forward each run.
+
+    Re-fetching years of bars from a paginated API every 30 minutes is what the seed
+    exists to prevent. (This property does *not* hold for whole-series sources like FRED —
+    see ``test_whole_series_sources_are_never_seed_limited``.)
+    """
     from engine.core.config import DataSourceSpec
     from engine.data.sync import sync_series
 
     store = OHLCVStore(tmp_path / "ohlcv")
     source = _DeepSource()
-    spec = DataSourceSpec(source="fred", symbol="DEXJPUS")
+    spec = DataSourceSpec(source="bitbank", symbol="BTC/JPY")
 
     sync_series(store, source, spec, "1d")
     assert source.since_values[0] is not None, "bars should be seeded, not fetched whole"
@@ -276,3 +281,35 @@ def test_enough_history_makes_trade_features_non_neutral(tmp_path):
     bars = bars.assign(open=150.0, high=150.0, low=150.0, volume=0.0)
     features = build_trade_features(bars, timeframe="1d", frames=frames)
     assert not bool((features == 0.0).all().all()), "features must not stay inert with real depth"
+
+
+def test_whole_series_sources_are_never_seed_limited(tmp_path):
+    """FRED returns the full history per request, so a 3-year seed discarded 50 years.
+
+    USD/JPY daily went back to 1971 and the store held 768 bars — the same sample-size
+    wall that rejects these strategies, self-inflicted and free to remove.
+    """
+    from engine.core.config import DataSourceSpec
+    from engine.data.sources import FULL_SERIES_SOURCES
+    from engine.data.sync import sync_series
+
+    assert "fred" in FULL_SERIES_SOURCES
+    store = OHLCVStore(tmp_path / "ohlcv")
+    source = _DeepSource()
+    result = sync_series(store, source, DataSourceSpec(source="fred", symbol="DEXJPUS"), "1d")
+
+    assert source.since_values == [None], "a whole-series source must never be seed-limited"
+    assert result.rows_total == 300
+
+
+def test_paginated_sources_keep_their_seed(tmp_path):
+    """ccxt/dukascopy are paginated — the seed is what keeps a single run bounded."""
+    from engine.core.config import DataSourceSpec
+    from engine.data.sources import FULL_SERIES_SOURCES
+    from engine.data.sync import sync_series
+
+    assert not ({"bitbank", "binance", "dukascopy", "alpaca"} & FULL_SERIES_SOURCES)
+    store = OHLCVStore(tmp_path / "ohlcv")
+    source = _DeepSource()
+    sync_series(store, source, DataSourceSpec(source="bitbank", symbol="BTC/JPY"), "1h")
+    assert source.since_values[0] is not None

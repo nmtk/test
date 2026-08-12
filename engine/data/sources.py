@@ -312,6 +312,13 @@ class FredSource:
 # Holding it to this bar would leave the job permanently red for a known, accepted gap.
 KEYLESS_SOURCES: frozenset[str] = frozenset({"fred", "dukascopy", "binance", "bitbank"})
 
+# Sources whose endpoint returns the *complete* series in a single request, filtered
+# client-side afterwards. For these an incremental seed window is pure loss: asking for
+# three years costs exactly what asking for fifty does, and throws the rest away. The
+# paginated venue APIs (ccxt, alpaca, dukascopy's hourly files) are the opposite — there
+# the seed is what keeps a run bounded.
+FULL_SERIES_SOURCES: frozenset[str] = frozenset({"fred", "stooq"})
+
 
 def make_source(source: str, settings) -> BarSource:
     """Factory: map a universe source name to a concrete :class:`BarSource`."""
