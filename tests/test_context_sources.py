@@ -197,3 +197,82 @@ def test_every_configured_context_timeframe_is_supported_by_its_source():
             f"{spec.key} is configured as {spec.timeframe!r} but "
             f"{spec.source} only stores {supported}"
         )
+
+
+class _DeepSource:
+    """Serves a long monthly history, and records what window was asked for."""
+
+    def __init__(self):
+        self.since_values: list[int | None] = []
+
+    def fetch_ohlcv(self, symbol, timeframe, since_ms=None, limit=None):
+        self.since_values.append(since_ms)
+        n = 300  # ~25 years of monthly prints
+        idx = pd.date_range("2000-01-01", periods=n, freq="MS", tz="UTC")
+        ts = idx.astype("datetime64[ms, UTC]").astype("int64").to_numpy()
+        close = np.linspace(10.0, 60.0, n)
+        df = pd.DataFrame(
+            {"ts": ts, "open": close, "high": close, "low": close, "close": close, "volume": 0.0}
+        )
+        return df[df["ts"] >= since_ms] if since_ms is not None else df
+
+
+def test_monthly_series_are_fetched_whole_not_incrementally(tmp_path):
+    """The 3-year seed capped trade-flow at 34 prints; the features need 36 to turn on."""
+    from engine.core.config import DataSourceSpec
+    from engine.data.sync import sync_series
+
+    store = OHLCVStore(tmp_path / "ohlcv")
+    source = _DeepSource()
+    spec = DataSourceSpec(source="fred", symbol="EXPJP")
+
+    first = sync_series(store, source, spec, "1mo")
+    assert first.ok and first.rows_total == 300, "a monthly series must arrive in full"
+    assert source.since_values == [None], "no seed window may be applied to releases"
+
+    # A second run must still ask for everything, so revisions to earlier months land.
+    sync_series(store, source, spec, "1mo")
+    assert source.since_values == [None, None]
+
+
+def test_daily_bars_still_sync_incrementally(tmp_path):
+    """Price bars keep the incremental path — re-fetching years of them every run is waste."""
+    from engine.core.config import DataSourceSpec
+    from engine.data.sync import sync_series
+
+    store = OHLCVStore(tmp_path / "ohlcv")
+    source = _DeepSource()
+    spec = DataSourceSpec(source="fred", symbol="DEXJPUS")
+
+    sync_series(store, source, spec, "1d")
+    assert source.since_values[0] is not None, "bars should be seeded, not fetched whole"
+    sync_series(store, source, spec, "1d")
+    assert source.since_values[1] is not None and source.since_values[1] > source.since_values[0]
+
+
+def test_enough_history_makes_trade_features_non_neutral(tmp_path):
+    """End to end: a full-depth sync must actually turn the trade_balance signal on."""
+    from engine.core.config import DataSourceSpec
+    from engine.data.sync import sync_series
+    from engine.features.macro_trade import build_trade_features
+
+    store = OHLCVStore(tmp_path / "ohlcv")
+    for symbol in ("EXPJP", "IMPJP", "XTEXVA01JPM667S", "XTIMVA01JPM667S"):
+        sync_series(store, _DeepSource(), DataSourceSpec(source="fred", symbol=symbol), "1mo")
+
+    frames = {
+        key: store.read("fred", symbol, "1mo")
+        for key, symbol in (
+            ("us_exports", "EXPJP"),
+            ("us_imports", "IMPJP"),
+            ("jp_exports", "XTEXVA01JPM667S"),
+            ("jp_imports", "XTIMVA01JPM667S"),
+        )
+    }
+    assert all(len(f) == 300 for f in frames.values())
+
+    ts = pd.date_range("2010-01-01", periods=4000, freq="D", tz="UTC")
+    bars = pd.DataFrame({"ts": ts.astype("datetime64[ms, UTC]").astype("int64"), "close": 150.0})
+    bars = bars.assign(open=150.0, high=150.0, low=150.0, volume=0.0)
+    features = build_trade_features(bars, timeframe="1d", frames=frames)
+    assert not bool((features == 0.0).all().all()), "features must not stay inert with real depth"

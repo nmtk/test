@@ -42,6 +42,11 @@ class SyncResult:
     error: str | None = None
 
 
+# Timeframes holding released statistics rather than bars. These are always fetched in
+# full rather than incrementally — see :func:`sync_series`.
+FULL_REFETCH_TIMEFRAMES = {"1mo"}
+
+
 def _seed_since_ms() -> int:
     seed = datetime.now(UTC) - timedelta(days=_DEFAULT_SEED_DAYS)
     return int(seed.timestamp() * 1000)
@@ -50,10 +55,31 @@ def _seed_since_ms() -> int:
 def sync_series(
     store: OHLCVStore, source_client, spec: DataSourceSpec, timeframe: str
 ) -> SyncResult:
-    """Sync a single (source, symbol, timeframe) series natively into the store."""
+    """Sync a single (source, symbol, timeframe) series natively into the store.
+
+    Monthly released statistics are re-fetched **whole** every run, for two reasons that
+    both bit in production:
+
+    * *Depth.* The endpoint returns the entire series in one request either way, so the
+      incremental seed was pure loss: a 3-year seed capped the trade-flow series at 34
+      monthly prints, and the feature layer needs 36 (a 12-month difference, z-scored over
+      a window needing 24 points) before it emits a single non-neutral value. The
+      strategy was inert and nothing said so.
+    * *Revisions.* Trade statistics are revised after first publication. An incremental
+      sync anchored on the last timestamp would never see a corrected earlier month.
+
+    Caveat this does not fix: using the *current* vintage of a revised figure is a mild
+    look-ahead, since the backtest reads a number nobody had on the release date. Fixing
+    that properly needs vintage data (FRED's ALFRED). The release-lag model in
+    engine/features/macro_trade.py handles *when* a figure appeared, not which revision
+    of it — the far larger of the two errors, but not the only one.
+    """
     try:
-        last = store.last_ts(spec.source, spec.symbol, timeframe)
-        since = last if last is not None else _seed_since_ms()
+        if timeframe in FULL_REFETCH_TIMEFRAMES:
+            since = None
+        else:
+            last = store.last_ts(spec.source, spec.symbol, timeframe)
+            since = last if last is not None else _seed_since_ms()
         df = source_client.fetch_ohlcv(spec.symbol, timeframe, since_ms=since)
         total = store.upsert(spec.source, spec.symbol, timeframe, df)
         return SyncResult(spec.source, spec.symbol, timeframe, total, ok=True)
