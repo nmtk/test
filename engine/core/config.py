@@ -132,8 +132,27 @@ class UniverseEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class ResearchSeries:
+    """A series researched but never traded — deep history for a venue that lacks it.
+
+    USD/JPY is the motivating case. Its tradeable bars come from a tick feed that this
+    repo can realistically backfill three years of, while the same instrument's daily
+    history is available for fifty-five years from FRED. A monthly-signal strategy like
+    ``trade_balance`` is unjudgeable on three years, so the research loop reads the deep
+    series — and, because ``fred`` is not a venue, records from it are barred from
+    promotion so they can never reach an executor.
+    """
+
+    source: str
+    symbol: str
+    timeframes: tuple[str, ...]
+    asset_class: AssetClass
+
+
+@dataclass(frozen=True, slots=True)
 class Universe:
     entries: tuple[UniverseEntry, ...] = field(default_factory=tuple)
+    research_series: tuple[ResearchSeries, ...] = field(default_factory=tuple)
 
     def by_asset_class(self, asset_class: AssetClass) -> list[UniverseEntry]:
         return [e for e in self.entries if e.instrument.asset_class is asset_class]
@@ -192,7 +211,17 @@ def load_universe(path: Path, default_timeframes: tuple[str, ...] = ("1h", "4h",
                 research_source=research_source,
             )
         )
-    return Universe(entries=tuple(entries))
+    research_series: list[ResearchSeries] = []
+    for item in raw.get("research_series", []):
+        research_series.append(
+            ResearchSeries(
+                source=str(item["source"]),
+                symbol=str(item["symbol"]),
+                timeframes=tuple(item.get("timeframes") or ("1d",)),
+                asset_class=AssetClass(item.get("asset_class", "fx")),
+            )
+        )
+    return Universe(entries=tuple(entries), research_series=tuple(research_series))
 
 
 # --------------------------------------------------------------------------------------

@@ -80,3 +80,19 @@ instruments:
     size_step: 1.0        # v20 takes integer units of the base currency
     min_size: 1.0
     data: { source: dukascopy, symbol: "USD/JPY" }
+
+# --- Research-only series (never traded) ---------------------------------------------
+#
+# Deep history for instruments whose *tradeable* feed is shallow. USD/JPY trades on bars
+# backfilled from a tick feed — realistically three years — while the same instrument's
+# daily history runs to 1971 on FRED. `trade_balance` reads a monthly signal and is simply
+# unjudgeable on three years: on 768 bars it scored PBO 0.43 and SPA 0.78 (both failing),
+# and on 13,936 bars the same strategy scored PBO 0.02 and SPA 0.01 (both passing).
+#
+# `fred` is not a venue, so records discovered here are barred from promotion — see
+# promote_step. They inform research; they never reach an executor.
+research_series:
+  - source: fred
+    symbol: DEXJPUS
+    asset_class: fx
+    timeframes: ["1d"]

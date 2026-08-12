@@ -9,6 +9,7 @@ is deliberate: the search/generator never promotes straight to live capital.
 
 from __future__ import annotations
 
+from collections import namedtuple
 from dataclasses import dataclass, field
 
 from engine.backtest import periods_per_year
@@ -84,9 +85,11 @@ def _record_for(
     existing,
     fee_bps=10.0,
     slippage_bps=5.0,
+    research_only=False,
 ):
     """Decide the population row for a discovery, preserving a still-valid champion."""
     metrics = _metrics(report, ppy, fee_bps=fee_bps, slippage_bps=slippage_bps)
+    metrics["research_only"] = bool(research_only)
     base = dict(
         family=family,
         strategy=strat_name,
@@ -149,12 +152,30 @@ def run_research(
             *universe.by_asset_class(AssetClass.CRYPTO),
             *universe.by_asset_class(AssetClass.FX),
         ]
-        for entry in researchable:
-            symbol = entry.instrument.symbol
+        # Research-only series carry deep history for instruments whose tradeable feed
+        # is shallow. They are researched exactly like tradeable ones and then barred
+        # from promotion (see engine/orchestration/promotion.py), because their source is
+        # not a venue any order can reach.
+        Researchable = namedtuple("Researchable", "symbol source asset_class timeframes only")
+        targets = [
+            Researchable(
+                e.instrument.symbol,
+                e.live_source.source,
+                e.instrument.asset_class,
+                e.timeframes,
+                False,
+            )
+            for e in researchable
+        ] + [
+            Researchable(r.symbol, r.source, r.asset_class, r.timeframes, True)
+            for r in universe.research_series
+        ]
+        for entry in targets:
+            symbol = entry.symbol
             if symbols and symbol not in symbols:
                 continue
-            source = entry.live_source.source
-            asset_class = entry.instrument.asset_class
+            source = entry.source
+            asset_class = entry.asset_class
             entry_fee, entry_slip = research_costs(asset_class)
             if fee_bps is not None:
                 entry_fee = fee_bps
@@ -196,6 +217,7 @@ def run_research(
                             existing=population.get(family),
                             fee_bps=entry_fee,
                             slippage_bps=entry_slip,
+                            research_only=entry.only,
                         )
                     )
                     summary.n_evaluated += 1
@@ -235,6 +257,7 @@ def run_research(
                             existing=population.get(family),
                             fee_bps=entry_fee,
                             slippage_bps=entry_slip,
+                            research_only=entry.only,
                         )
                     )
                     summary.n_evaluated += 1

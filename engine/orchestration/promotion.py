@@ -234,6 +234,12 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
     try:
         for rec in population.list("incubating"):
             summary.n_incubating += 1
+            if (rec.get("metrics") or {}).get("research_only"):
+                # Validated on a series that is not a tradeable venue (see
+                # ResearchSeries). Promoting it would hand the executor a symbol no
+                # broker can fill — _resolve_instrument would fall back to bitbank and
+                # try to trade "DEXJPUS". It informs research; it never trades.
+                continue
             fwd = forward_returns(store, rec, cfg, rec.get("incubation_start_ts"))
             if incubation_passed(fwd, rec["metrics"], cfg):
                 population.update_fields(
