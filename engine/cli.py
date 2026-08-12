@@ -18,6 +18,7 @@ from engine.backtest import periods_per_year, run_backtest
 from engine.core.config import load_settings, load_universe
 from engine.core.killswitch import is_engaged
 from engine.core.types import AssetClass
+from engine.data.sources import KEYLESS_SOURCES
 from engine.data.store import OHLCVStore
 from engine.data.sync import sync_context, sync_universe
 from engine.features.context import ContextAugmenter
@@ -106,14 +107,29 @@ def _cmd_sync_data(args: argparse.Namespace) -> int:
     results.extend(sync_context(settings, store))
 
     failures = 0
+    keyless_failures: list[str] = []
     for r in results:
         if r.ok:
             print(f"  ok   {r.source:<8} {r.symbol:<10} {r.timeframe:<4} rows={r.rows_total}")
         else:
             failures += 1
             print(f"  FAIL {r.source:<8} {r.symbol:<10} {r.timeframe:<4} {r.error}")
+            if r.source in KEYLESS_SOURCES:
+                keyless_failures.append(f"{r.source}:{r.symbol}:{r.timeframe}")
     print(f"synced {len(results) - failures}/{len(results)} series")
-    # Exit non-zero only if everything failed (partial success is fine for a cron job).
+
+    # A source needing credentials that aren't set is an expected, tolerated no-op — that
+    # is how this repo runs with only some venues configured. A *keyless* source failing
+    # is not: nothing about the environment excuses it, so it is a real regression and the
+    # job must go red. Reporting success while fetching nothing is how a broken feed
+    # survived unnoticed once already.
+    if keyless_failures:
+        print(f"\nERROR: {len(keyless_failures)} keyless series failed — these need no")
+        print("credentials, so this is a real failure, not a missing-secret no-op:")
+        for name in keyless_failures:
+            print(f"  {name}")
+        return 1
+    # Otherwise exit non-zero only if everything failed (partial success is fine for cron).
     return 1 if results and failures == len(results) else 0
 
 

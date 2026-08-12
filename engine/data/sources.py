@@ -302,6 +302,17 @@ class FredSource:
         return out.dropna(subset=["close"])
 
 
+# Keyless sources that are also expected to be *reliable*. A failure from one of these is
+# a genuine breakage — a dead endpoint, a blocked network, a wrong series id — rather than
+# the expected no-op of running without a venue's credentials configured, so it turns the
+# sync job red (see ``_cmd_sync_data``).
+#
+# stooq is deliberately absent: it is keyless but documented as best-effort here because
+# it 404s datacenter IPs, and the feature layer already degrades its series to neutral.
+# Holding it to this bar would leave the job permanently red for a known, accepted gap.
+KEYLESS_SOURCES: frozenset[str] = frozenset({"fred", "dukascopy", "binance", "bitbank"})
+
+
 def make_source(source: str, settings) -> BarSource:
     """Factory: map a universe source name to a concrete :class:`BarSource`."""
     if source == "stooq":
