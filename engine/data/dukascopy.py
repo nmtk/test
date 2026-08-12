@@ -191,6 +191,15 @@ def spread_stats_bps(ticks: pd.DataFrame) -> dict[str, float]:
     }
 
 
+class FeedUnreachable(RuntimeError):
+    """The feed host could not be reached at all, as opposed to an hour having no data.
+
+    Worth its own type because the two failures call for opposite responses: a missing
+    hour is normal and skipped, while an unreachable host means this source cannot serve
+    the instrument from this network and the operator needs to switch to another one.
+    """
+
+
 @dataclass(slots=True)
 class DukascopySource:
     """Historical FX bars built from Dukascopy ticks.
@@ -199,12 +208,22 @@ class DukascopySource:
     feed's naming internally. Each ``fetch_ohlcv`` call walks at most ``max_hours`` hourly
     files, so a long backfill converges over several scheduled runs rather than hanging a
     single one.
+
+    Reachability caveat: this feed is not guaranteed to answer datacenter IPs. This repo
+    already carries one instance of that problem — stooq 404s every GitHub Actions runner
+    (see strategies_config/context.yaml) — and Dukascopy has been observed *timing out at
+    the TCP level* from Actions, which no header or retry can fix. When that happens the
+    fix is not here: point the instrument's ``data.source`` at ``oanda`` in
+    universe.yaml, which serves the same 5m candles over an API built for programmatic
+    access (free practice credentials, see engine/execution/brokers/oanda.py).
     """
 
     max_hours: int = DEFAULT_MAX_HOURS
     timeout: int = 30
+    retries: int = 3
     # Populated after each fetch so callers can report the measured spread.
     last_spread: dict[str, float] | None = None
+    _session: object | None = None
 
     def fetch_ohlcv(
         self, symbol: str, timeframe: str, since_ms: int | None = None, limit: int | None = None
@@ -219,13 +238,28 @@ class DukascopySource:
         frames: list[pd.DataFrame] = []
         cursor = start
         fetched = 0
+        attempted = 0
+        failures = 0
         while cursor < end and fetched < self.max_hours:
             if cursor.weekday() < 5 or cursor.weekday() == 6:
                 # Saturday has no session; Sunday only opens late, but the feed simply
                 # returns an empty body for closed hours so it costs one cheap request.
-                payload = self._get(hour_url(symbol, cursor))
-                if payload:
-                    frames.append(decode_bi5(payload, symbol, cursor))
+                attempted += 1
+                try:
+                    payload = self._get(hour_url(symbol, cursor))
+                except Exception:  # noqa: BLE001 - one bad hour must not lose the run
+                    failures += 1
+                    # Every one of the first few requests failing means the host is not
+                    # answering this network at all; anything else is a flaky hour to skip.
+                    if failures == attempted and attempted >= 3:
+                        raise FeedUnreachable(
+                            f"{BASE_URL} did not answer {attempted} consecutive requests — "
+                            "the feed is likely blocking this network. Point this "
+                            "instrument's data.source at 'oanda' in universe.yaml."
+                        ) from None
+                else:
+                    if payload:
+                        frames.append(decode_bi5(payload, symbol, cursor))
             cursor += timedelta(hours=1)
             fetched += 1
 
@@ -240,11 +274,42 @@ class DukascopySource:
             bars = bars.tail(limit).reset_index(drop=True)
         return bars
 
-    def _get(self, url: str) -> bytes:
-        import requests
+    def _client(self):
+        """A pooled session — a single run makes up to ``max_hours`` sequential requests."""
+        if self._session is None:
+            import requests
 
-        response = requests.get(url, timeout=self.timeout)
-        if response.status_code == 404:
-            return b""  # no session in that hour
-        response.raise_for_status()
-        return response.content
+            session = requests.Session()
+            session.headers.update(
+                {
+                    "User-Agent": (
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+                    ),
+                    "Accept": "*/*",
+                }
+            )
+            self._session = session
+        return self._session
+
+    def _get(self, url: str) -> bytes:
+        """Fetch one hourly file. Returns empty bytes for an hour with no session."""
+        import time
+
+        last_error: Exception | None = None
+        for attempt in range(max(self.retries, 1)):
+            try:
+                response = self._client().get(url, timeout=self.timeout)
+            except Exception as exc:  # noqa: BLE001 - retried below, re-raised if terminal
+                last_error = exc
+                time.sleep(2**attempt)
+                continue
+            if response.status_code == 404:
+                return b""  # no session in that hour
+            if response.status_code >= 500:
+                last_error = RuntimeError(f"{response.status_code} from {url}")
+                time.sleep(2**attempt)
+                continue
+            response.raise_for_status()
+            return response.content
+        raise last_error if last_error else RuntimeError(f"failed to fetch {url}")

@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import engine.data.sync as sync_mod
 from engine.core.config import Settings, load_context_series, load_settings
@@ -171,3 +172,28 @@ def test_sync_context_without_config_is_noop(tmp_path):
     )
     store = OHLCVStore(settings.data_dir / "ohlcv")
     assert sync_context(settings, store) == []
+
+
+def test_fred_stores_monthly_release_series_not_only_daily():
+    """The trade-flow series are monthly. Rejecting "1mo" silently disabled all four.
+
+    The first deployment failed here: context.yaml labelled them 1mo, FredSource still
+    hard-required 1d, and every trade-flow sync raised before a single byte was fetched.
+    """
+    source = FredSource()
+    assert "1mo" in source.SUPPORTED_TIMEFRAMES
+    assert "1d" in source.SUPPORTED_TIMEFRAMES
+    with pytest.raises(ValueError, match="fred source stores"):
+        source.fetch_ohlcv("EXPJP", "4h")
+
+
+def test_every_configured_context_timeframe_is_supported_by_its_source():
+    """Guards the class of bug above: config and source must agree, for every series."""
+    settings = load_settings()
+    for spec in load_context_series(settings.context_path):
+        source = make_source(spec.source, settings)
+        supported = getattr(source, "SUPPORTED_TIMEFRAMES", ("1d",))
+        assert spec.timeframe in supported, (
+            f"{spec.key} is configured as {spec.timeframe!r} but "
+            f"{spec.source} only stores {supported}"
+        )

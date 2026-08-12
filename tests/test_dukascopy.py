@@ -216,3 +216,67 @@ def test_fetch_with_no_data_returns_empty_canonical_frame(monkeypatch):
     )
     assert len(bars) == 0
     assert list(bars.columns) == ["ts", "open", "high", "low", "close", "volume"]
+
+
+# -- reachability ------------------------------------------------------------------------
+
+
+def test_total_failure_raises_feed_unreachable_not_silence(monkeypatch):
+    """A host that answers nothing must be loud. Silence here cost a whole sync run.
+
+    The first deployment failed exactly this way: every request timed out, the per-series
+    exception handler swallowed it, and the job reported success with no FX data.
+    """
+    from engine.data.dukascopy import FeedUnreachable
+
+    def always_fails(self, url):
+        raise OSError("connect timeout")
+
+    monkeypatch.setattr(DukascopySource, "_get", always_fails)
+    with pytest.raises(FeedUnreachable, match="oanda"):
+        DukascopySource(max_hours=10).fetch_ohlcv(
+            "USD/JPY", "5m", since_ms=int(datetime(2024, 3, 5, tzinfo=UTC).timestamp() * 1000)
+        )
+
+
+def test_a_few_flaky_hours_do_not_lose_the_run(monkeypatch):
+    """One bad hour is skipped; the surrounding good hours still make it into the store."""
+    calls = {"n": 0}
+
+    def flaky(self, url):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("transient")
+        return _bi5([(0, 151_238, 151_234, 1.0, 1.0)])
+
+    monkeypatch.setattr(DukascopySource, "_get", flaky)
+    bars = DukascopySource(max_hours=5).fetch_ohlcv(
+        "USD/JPY", "1h", since_ms=int(datetime(2024, 3, 5, tzinfo=UTC).timestamp() * 1000)
+    )
+    assert len(bars) == 4, "only the flaky hour should be missing"
+
+
+def test_retries_then_succeeds(monkeypatch):
+    attempts = {"n": 0}
+
+    class _Resp:
+        status_code = 200
+        content = _bi5([(0, 151_238, 151_234, 1.0, 1.0)])
+
+        def raise_for_status(self):
+            pass
+
+    class _Session:
+        headers: dict = {}
+
+        def get(self, url, timeout=None):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise OSError("flaky")
+            return _Resp()
+
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    source = DukascopySource(retries=3)
+    source._session = _Session()
+    assert source._get("http://example/x.bi5")
+    assert attempts["n"] == 3

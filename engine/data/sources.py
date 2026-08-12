@@ -252,21 +252,30 @@ class StooqSource:
 
 
 class FredSource:
-    """Daily observations from FRED's keyless ``fredgraph.csv`` endpoint.
+    """Observations from FRED's keyless ``fredgraph.csv`` endpoint.
 
-    A fallback/alternative for context series (e.g. ``DGS10``). Values are levels, so
-    open=high=low=close and volume=0.
+    Used for context series (e.g. ``DGS10``) and for released statistics (the monthly
+    trade-flow series). Values are levels, so open=high=low=close and volume=0.
+
+    ``timeframe`` here is a **storage label, not a request parameter**: fredgraph.csv
+    always returns a series at its own native frequency, so the caller's job is to label
+    it correctly, not to ask for a resampling FRED will not do. Daily series are stored
+    under ``1d`` and monthly ones under ``1mo``; anything else is a configuration mistake
+    worth failing on.
     """
 
     BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+    SUPPORTED_TIMEFRAMES = ("1d", "1mo")
 
     def fetch_ohlcv(
         self, symbol: str, timeframe: str, since_ms: int | None = None, limit: int | None = None
     ) -> pd.DataFrame:
         import requests
 
-        if timeframe != "1d":
-            raise ValueError(f"fred source only serves 1d bars, got {timeframe!r}")
+        if timeframe not in self.SUPPORTED_TIMEFRAMES:
+            raise ValueError(
+                f"fred source stores {self.SUPPORTED_TIMEFRAMES} series, got {timeframe!r}"
+            )
         resp = requests.get(self.BASE, params={"id": symbol}, timeout=60)
         resp.raise_for_status()
         df = self._parse_csv(resp.text, symbol)
