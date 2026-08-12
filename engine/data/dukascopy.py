@@ -52,6 +52,13 @@ RECORD_SIZE = _RECORD.size  # 20 bytes
 # requests, which would blow a free runner's budget — and be rude to a free feed — in one
 # go. The store upserts, so each scheduled run simply extends history by up to a week
 # until it catches up; after that a run only walks the few hours since the last bar.
+#
+# This pairs with the 30-minute sync cron rather than a slower FX-specific one. At 48 runs
+# a day the walk covers ~336 days of history per real day, so a three-year backfill
+# completes in ~3.3 days; a daily cadence would take ~156. The size argument for a slower
+# cadence is already answered by monthly partitioning in engine/data/store.py — measured
+# at 0.25 MiB of git growth per simulated day, down from 12.3 MiB unpartitioned — so
+# trading 47x the backfill time for it would be a bad deal.
 DEFAULT_MAX_HOURS = 24 * 7
 
 # Dukascopy has no data before this, and requesting earlier just wastes 404s.
