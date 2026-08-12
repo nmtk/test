@@ -164,6 +164,7 @@ def build_trade_features(
     target_tf_ms = timeframe_seconds(timeframe) * 1000
     staleness_ms = STALENESS_LIMIT_DAYS * 86_400_000
     neutral = pd.Series(0.0, index=bars.index)
+    never = pd.Series(False, index=bars.index)
 
     def released(key: str) -> pd.DataFrame | None:
         raw = frames.get(key)
@@ -177,19 +178,20 @@ def build_trade_features(
         return frame if len(frame) else None
 
     def balance_feature(exports_key: str, imports_key: str) -> tuple[pd.Series, pd.Series, bool]:
-        """Return ``(balance_momentum, import_cost_momentum, available)`` for the bars.
+        """Return ``(balance_momentum, import_cost_momentum, available_per_bar)``.
 
-        ``available`` is False whenever the pair could not be computed, so callers can tell
-        a genuine neutral reading apart from missing data.
+        ``available_per_bar`` is a boolean Series, not a flag: whether this country's
+        figures were public is a question with a different answer on every bar, and the
+        differential below depends on getting that granularity right.
         """
         exports, imports = released(exports_key), released(imports_key)
         if exports is None or imports is None:
-            return neutral, neutral, False
+            return neutral, neutral, never
         # Align the two series on their shared availability instants: a balance is only
         # knowable once BOTH sides of it have been published.
         merged = exports.merge(imports, on="ts", how="inner", suffixes=("_x", "_m"))
         if len(merged) <= BALANCE_LOOKBACK_MONTHS:
-            return neutral, neutral, False
+            return neutral, neutral, never
         balance = _normalized_balance(merged["value_x"], merged["value_m"])
         derived = pd.DataFrame(
             {
@@ -211,15 +213,25 @@ def build_trade_features(
             ctx_tf_ms=0,  # ``ts`` is already the availability instant
             staleness_limit_ms=staleness_ms,
         )
-        return joined["balance"].fillna(0.0), joined["import_cost"].fillna(0.0), True
+        # NaN out of the join means "nothing published yet", which is emphatically not the
+        # same as a published figure that happens to read zero. Keep the distinction.
+        return (
+            joined["balance"].fillna(0.0),
+            joined["import_cost"].fillna(0.0),
+            joined["balance"].notna(),
+        )
 
-    jp_balance, jp_import_cost, jp_ok = balance_feature("jp_exports", "jp_imports")
-    us_balance, _, us_ok = balance_feature("us_exports", "us_imports")
+    jp_balance, jp_import_cost, jp_live = balance_feature("jp_exports", "jp_imports")
+    us_balance, _, us_live = balance_feature("us_exports", "us_imports")
 
-    # The differential is only a differential when BOTH legs exist. With one country
-    # missing, ``us - jp`` would quietly collapse to a single-country signal wearing the
-    # name of a comparison — so it reads neutral instead and the strategy stays flat.
-    diff = ((us_balance - jp_balance) / 2.0).fillna(0.0) if (jp_ok and us_ok) else neutral
+    # The differential is only a differential on bars where BOTH legs were actually
+    # public. Japan's figures run back to 1957 and the US bilateral series only to 1985,
+    # so for fourteen years ``us - jp`` would otherwise resolve to a *negated, halved
+    # Japan signal* wearing the name of a comparison — non-zero, plausible-looking, and
+    # not what it claims to be. Availability is per bar, not per series: a series-level
+    # check passes here, because both series do exist; they simply had not both been
+    # published yet on the bar being computed.
+    diff = ((us_balance - jp_balance) / 2.0).where(jp_live & us_live, 0.0).fillna(0.0)
 
     features = {
         "mac_jp_balance": jp_balance,

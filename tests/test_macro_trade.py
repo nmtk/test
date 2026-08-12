@@ -222,3 +222,48 @@ def test_strategy_respects_threshold_and_bounds():
 def test_strategy_rejects_unknown_signal():
     with pytest.raises(ValueError, match="unknown signal"):
         TradeBalanceUsdJpy(signal="not_a_signal")
+
+
+def test_differential_is_neutral_while_either_leg_is_unpublished():
+    """Availability is per *bar*, not per series — the deep-history bug.
+
+    Japan's trade figures run back to 1957 and the US bilateral series only to 1985. Both
+    series exist, so a series-level check passes, yet for fourteen years only one leg had
+    actually been published on any given bar. ``(us - jp)/2`` then resolves to a negated,
+    halved Japan signal wearing the name of a comparison: non-zero, plausible, wrong.
+    """
+    rng = np.random.default_rng(19)
+    long_n, short_n = 240, 120  # Japan starts 10 years before the US
+    frames = {
+        "jp_exports": _monthly("2000-01-01", long_n, 60 + rng.normal(0, 5, long_n)),
+        "jp_imports": _monthly("2000-01-01", long_n, 65 + rng.normal(0, 5, long_n)),
+        "us_exports": _monthly("2010-01-01", short_n, 6 + rng.normal(0, 0.5, short_n)),
+        "us_imports": _monthly("2010-01-01", short_n, 12 + rng.normal(0, 0.5, short_n)),
+    }
+    bars = _daily_bars("2000-01-01", 7000)
+    out = build_trade_features(bars, timeframe="1d", frames=frames)
+
+    early = bars["ts"] < _ms("2009-01-01")
+    assert out.loc[early, "mac_jp_balance"].abs().sum() > 0.0, "Japan's leg should be live"
+    assert (out.loc[early, "mac_us_balance"] == 0.0).all(), "the US leg is not published yet"
+    assert (out.loc[early, "mac_balance_diff"] == 0.0).all(), (
+        "a differential with one unpublished leg must read neutral, not half the other leg"
+    )
+
+    # Once both legs are public the differential switches on.
+    late = bars["ts"] > _ms("2015-01-01")
+    assert out.loc[late, "mac_balance_diff"].abs().sum() > 0.0
+
+
+def test_differential_matches_the_legs_where_both_are_live():
+    rng = np.random.default_rng(23)
+    frames = {
+        key: _monthly("2000-01-01", 240, 50 + rng.normal(0, 4, 240))
+        for key in ("jp_exports", "jp_imports", "us_exports", "us_imports")
+    }
+    bars = _daily_bars("2000-01-01", 7000)
+    out = build_trade_features(bars, timeframe="1d", frames=frames)
+    live = out["mac_balance_diff"] != 0.0
+    assert live.sum() > 100
+    expected = (out.loc[live, "mac_us_balance"] - out.loc[live, "mac_jp_balance"]) / 2.0
+    pd.testing.assert_series_equal(out.loc[live, "mac_balance_diff"], expected, check_names=False)
