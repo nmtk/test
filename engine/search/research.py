@@ -27,7 +27,15 @@ from engine.strategies import get_strategy
 from engine.validation.gate import GateThresholds
 from engine.validation.ledger import TrialLedger
 
-DEFAULT_ARCHETYPES = ("tsmom", "ma_cross", "donchian", "zscore_reversion", "macro_flow", "wemof")
+DEFAULT_ARCHETYPES = (
+    "tsmom",
+    "ma_cross",
+    "donchian",
+    "zscore_reversion",
+    "macro_flow",
+    "wemof",
+    "trade_balance",
+)
 MIN_BARS = 300
 
 # GP is the most overfitting-prone generator (see docs/MANUAL.md §5), so it faces a

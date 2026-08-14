@@ -54,3 +54,29 @@ def test_discover_challenger_runs_gate():
     assert 0.0 <= report.pbo <= 1.0
     assert 0.0 <= report.dsr <= 1.0
     assert set(report.checks) == {"dsr", "pbo", "spa", "cpcv_median", "cpcv_pct_positive"}
+
+
+def test_every_registered_archetype_is_actually_researched():
+    """A registered strategy the nightly loop never runs is dead code that looks alive.
+
+    trade_balance shipped registered, configured, and with a research-only deep-history
+    series wired for it — and was still never researched, because it was missing from
+    this one tuple. Nothing failed; it simply never appeared in the population.
+    """
+    import engine.strategies as strategies_pkg
+    from engine.search.research import DEFAULT_ARCHETYPES
+    from engine.strategies.base import Strategy
+
+    # Derived from what the package explicitly exports, not the global registry: test
+    # modules register dummy strategies into that registry, which would make this pass or
+    # fail depending on collection order.
+    shipped = {
+        obj.name
+        for obj in (getattr(strategies_pkg, n) for n in strategies_pkg.__all__)
+        if isinstance(obj, type) and issubclass(obj, Strategy) and obj is not Strategy
+    }
+    # Generated/composite archetypes are driven by their own discovery paths, not the
+    # per-archetype parameter search.
+    driven_elsewhere = {"gp", "ensemble"}
+    missing = shipped - driven_elsewhere - set(DEFAULT_ARCHETYPES)
+    assert not missing, f"shipped but never researched: {sorted(missing)}"
