@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from engine.backtest import run_backtest
+from engine.backtest import backtest_strategy
 from engine.validation.splits import combinatorial_purged_splits
 
 
@@ -72,9 +72,8 @@ def cpcv_evaluate_strategy(
     n_test_groups: int = 2,
     embargo_frac: float = 0.01,
 ) -> CPCVResult:
-    weights = strategy.weights(bars)
-    result = run_backtest(
-        bars["close"], weights, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
+    result = backtest_strategy(
+        strategy, bars, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
     )
     return cpcv_sharpes(
         result.returns,

@@ -115,6 +115,29 @@ def research_costs(asset_class: AssetClass) -> tuple[float, float]:
     return RESEARCH_COSTS_BPS.get(asset_class, RESEARCH_COSTS_BPS[AssetClass.CRYPTO])
 
 
+# Costs for strategies that fill on the bid/ask path (engine/backtest/intrabar.py). Those
+# already pay the *measured* spread on every fill, so the figures above — which stand in
+# for the spread in mid-price backtests — would charge it twice. What remains is the gap
+# between the data's book and the execution venue's: the path is Dukascopy's ECN quote
+# (~0.2-0.5 pips on USD/JPY) while a retail venue quotes wider — on the order of a pip
+# for OANDA's standard pricing, or a raw spread plus commission. 0.3bps per fill (~0.45
+# pip at 150, ~0.9 pip a round trip) tops the measured spread up to about that, erring
+# wide. A venue known to be tighter is passed explicitly (`--fee-bps/--slippage-bps`);
+# it is never assumed.
+INTRABAR_COSTS_BPS: dict[AssetClass, tuple[float, float]] = {
+    AssetClass.FX: (0.0, 0.3),
+}
+
+
+def intrabar_research_costs(asset_class: AssetClass) -> tuple[float, float]:
+    """``(fee_bps, slippage_bps)`` on top of the measured spread, for intrabar fills.
+
+    An asset class with no intrabar figure falls back to its mid-price costs, which
+    double-count the spread — wrong, but in the direction that rejects, not invents.
+    """
+    return INTRABAR_COSTS_BPS.get(asset_class, research_costs(asset_class))
+
+
 def make_client_order_id(prefix: str, symbol: str, bar_ts_ms: int, target_qty: float) -> str:
     """Deterministic client order id for a (run, symbol, bar, target) tuple.
 

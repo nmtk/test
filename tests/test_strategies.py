@@ -27,9 +27,16 @@ def _falling(n=300):
     return _bars(list(100.0 * (0.99 ** np.arange(n))))
 
 
-# "gp" needs an evolved program and "ensemble" needs a member list; both are covered
-# in their own test modules.
-@pytest.mark.parametrize("name", [n for n in all_strategies() if n not in ("gp", "ensemble")])
+# "gp" needs an evolved program and "ensemble" needs a member list; intrabar strategies
+# fill inside the bar and have no weight series at all. Each is covered in its own module.
+@pytest.mark.parametrize(
+    "name",
+    [
+        n
+        for n, cls in all_strategies().items()
+        if n not in ("gp", "ensemble") and not getattr(cls, "requires_intrabar", False)
+    ],
+)
 def test_weights_are_bounded_and_aligned(name):
     bars = _rising()
     w = get_strategy(name)().weights(bars)

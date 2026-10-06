@@ -8,7 +8,7 @@ on hyperactive trading. The independent gate still has the final say.
 
 from __future__ import annotations
 
-from engine.backtest import run_backtest
+from engine.backtest import backtest_strategy
 from engine.validation.cpcv import cpcv_sharpes
 
 DEFAULT_TURNOVER_PENALTY = 0.25
@@ -26,9 +26,12 @@ def robust_score(
     cpcv_groups: int = 6,
     cpcv_test_groups: int = 2,
 ) -> float:
-    weights = strategy_cls(**params).weights(bars)
-    result = run_backtest(
-        bars["close"], weights, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
+    result = backtest_strategy(
+        strategy_cls(**params),
+        bars,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+        periods_per_year=ppy,
     )
     cpcv = cpcv_sharpes(
         result.returns, n_groups=cpcv_groups, n_test_groups=cpcv_test_groups, ppy=ppy

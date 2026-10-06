@@ -50,6 +50,37 @@ def run_backtest(
     )
 
 
+def backtest_strategy(
+    strategy,
+    bars: pd.DataFrame,
+    *,
+    fee_bps: float = 0.0,
+    slippage_bps: float = 0.0,
+    periods_per_year: float = 365.0,
+) -> BacktestResult:
+    """Backtest one strategy instance on ``bars``.
+
+    A strategy whose fills cannot be expressed as close-to-close weights (resting orders
+    that fill inside the bar) provides its own ``backtest``; every other strategy is
+    run through :func:`run_backtest` on its weights.
+    """
+    own = getattr(strategy, "backtest", None)
+    if callable(own):
+        return own(
+            bars,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+            periods_per_year=periods_per_year,
+        )
+    return run_backtest(
+        bars["close"],
+        strategy.weights(bars),
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+        periods_per_year=periods_per_year,
+    )
+
+
 def run_backtest_panel(
     closes: pd.DataFrame,
     weights: pd.DataFrame,

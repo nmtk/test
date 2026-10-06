@@ -87,9 +87,14 @@ def discover_challenger(
     thresholds: GateThresholds | None = None,
     ledger: TrialLedger | None = None,
     family: str | None = None,
+    inherited_trials: int = 0,
     **gate_kwargs,
 ) -> ValidationReport:
-    """Search, then validate the explored family through the gate; returns its report."""
+    """Search, then validate the explored family through the gate; returns its report.
+
+    ``inherited_trials`` adds another family's cumulative count to the DSR deflation, for
+    a family that re-searches a space an earlier one already mined.
+    """
     outcome = search(
         bars,
         strategy_cls,
@@ -122,6 +127,6 @@ def discover_challenger(
         best_params=best_params,
         ppy=ppy,
         thresholds=thresholds,
-        n_trials=trials,
+        n_trials=trials + int(inherited_trials),
         **gate_kwargs,
     )

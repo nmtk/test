@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 import pandas as pd
 
-from engine.backtest import run_backtest
+from engine.backtest import backtest_strategy
 from engine.backtest.metrics import max_drawdown
 from engine.validation.cpcv import cpcv_sharpes
 from engine.validation.ledger import TrialLedger
@@ -81,9 +81,12 @@ def returns_for_configs(
     """Backtest each config and stack per-bar returns into a (T x C) matrix."""
     columns = []
     for cfg in configs:
-        weights = strategy_cls(**cfg).weights(bars)
-        result = run_backtest(
-            bars["close"], weights, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
+        result = backtest_strategy(
+            strategy_cls(**cfg),
+            bars,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+            periods_per_year=ppy,
         )
         columns.append(result.returns.to_numpy(dtype=float))
     return np.column_stack(columns)

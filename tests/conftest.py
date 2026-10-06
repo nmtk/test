@@ -44,3 +44,34 @@ def paper_settings(tmp_path):
         ),
     )
     return settings
+
+
+def _synthetic_ticks(
+    hours: float = 30.0,
+    seed: int = 0,
+    start_ms: int = 1_704_067_200_000,  # 2024-01-01T00:00Z
+    jump_rate: float = 0.002,
+    wide_rate: float = 0.002,
+) -> pd.DataFrame:
+    """USD/JPY-like ticks in integer feed points (1 point = 0.001 = 0.1 pip).
+
+    A random walk of 1-3 point steps every 0.2-4s, with occasional multi-pip jumps and
+    occasional spread blow-outs, so intrabar tests see gaps, wide quotes and minutes that
+    touch both a take-profit and a stop.
+    """
+    rng = np.random.default_rng(seed)
+    n = int(hours * 3600 / 2.1)
+    ts = start_ms + np.cumsum(rng.integers(200, 4000, n)).astype("int64")
+    step = rng.integers(-3, 4, n)
+    jumps = rng.random(n) < jump_rate
+    step[jumps] = rng.integers(-60, 61, int(jumps.sum()))
+    bid = 150_000 + np.cumsum(step)
+    spread = rng.integers(2, 7, n)
+    wide = rng.random(n) < wide_rate
+    spread[wide] = rng.integers(20, 60, int(wide.sum()))
+    return pd.DataFrame({"ts": ts, "bid": bid / 1000.0, "ask": (bid + spread) / 1000.0})
+
+
+@pytest.fixture
+def make_ticks():
+    return _synthetic_ticks

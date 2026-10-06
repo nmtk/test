@@ -6,11 +6,17 @@ weight decided on bar t's close is only earned from bar t+1 onward. A parity tes
 the event-driven PaperBroker guards this property.
 """
 
-from engine.backtest.engine import BacktestResult, run_backtest, run_backtest_panel
+from engine.backtest.engine import (
+    BacktestResult,
+    backtest_strategy,
+    run_backtest,
+    run_backtest_panel,
+)
 from engine.backtest.metrics import compute_stats, periods_per_year
 
 __all__ = [
     "BacktestResult",
+    "backtest_strategy",
     "run_backtest",
     "run_backtest_panel",
     "compute_stats",
