@@ -236,12 +236,16 @@ class DukascopySource:
             bars = bars.tail(limit).reset_index(drop=True)
         return bars
 
-    def fetch_ticks(self, symbol: str, since_ms: int | None = None) -> pd.DataFrame:
+    def fetch_ticks(
+        self, symbol: str, since_ms: int | None = None, max_hours: int | None = None
+    ) -> pd.DataFrame:
         """Raw ``ts``/``bid``/``ask`` ticks from the hour containing ``since_ms`` onward.
 
-        Same request budget as :meth:`fetch_ohlcv` (at most ``max_hours`` hourly files,
-        never the still-forming current hour). Also refreshes ``last_spread``.
+        Walks at most ``max_hours`` hourly files (default: the instance's budget, the same
+        one :meth:`fetch_ohlcv` uses), never the still-forming current hour. Also
+        refreshes ``last_spread``.
         """
+        budget = self.max_hours if max_hours is None else int(max_hours)
         start = (
             datetime.fromtimestamp(since_ms / 1000, tz=UTC) if since_ms is not None else None
         ) or EPOCH
@@ -254,7 +258,7 @@ class DukascopySource:
         fetched = 0
         attempted = 0
         failures = 0
-        while cursor < end and fetched < self.max_hours:
+        while cursor < end and fetched < budget:
             if cursor.weekday() < 5 or cursor.weekday() == 6:
                 # Saturday has no session; Sunday only opens late, but the feed simply
                 # returns an empty body for closed hours so it costs one cheap request.
