@@ -11,6 +11,7 @@ import pytest
 from engine.core.config import Settings, load_settings, load_universe
 from engine.data.dukascopy import DukascopySource, ticks_to_ohlcv
 from engine.data.intrabar import (
+    BACKFILL_MAX_HOURS,
     MIN_COVERAGE,
     PATH_LABEL,
     STEP_MS,
@@ -234,9 +235,11 @@ class _FakeFeed:
         self.ticks = ticks
         self.fail = fail
         self.calls: list[int | None] = []
+        self.budgets: list[int | None] = []
 
-    def fetch_ticks(self, symbol, since_ms=None):
+    def fetch_ticks(self, symbol, since_ms=None, max_hours=None):
         self.calls.append(since_ms)
+        self.budgets.append(max_hours)
         if self.fail:
             raise OSError("connect timeout")
         return self.ticks[self.ticks["ts"] >= (since_ms or 0) // 3_600_000 * 3_600_000]
@@ -262,6 +265,15 @@ def test_sync_seeds_where_the_bars_start_then_continues(tmp_path, make_ticks):
     sync_intrabar(settings, universe, ohlcv=ohlcv, client_for=lambda _s: feed)
     assert feed.calls[-1] == last
     assert results[0].rows_total == len(store.read_frame("dukascopy", "USD/JPY"))
+    assert feed.budgets == [BACKFILL_MAX_HOURS] * 2
+
+
+def test_the_backfill_budget_finishes_three_years_in_about_a_week():
+    """Sized for the cron as it actually fires here (~5 runs a day), not as written."""
+    runs_per_day = 5
+    days = 3 * 365 * 24 / (BACKFILL_MAX_HOURS * runs_per_day)
+    assert days <= 8
+    assert BACKFILL_MAX_HOURS * runs_per_day <= 24 * 7 * 48, "no more requests a day than before"
 
 
 def test_sync_failure_is_reported_not_swallowed(tmp_path, make_ticks):
@@ -291,3 +303,13 @@ def test_dukascopy_fetch_ticks_returns_both_sides(monkeypatch):
     assert (ticks["ask"] > ticks["bid"]).all()
     assert ticks["ts"].is_monotonic_increasing
     assert source.last_spread["n_ticks"] == 4.0
+
+
+def test_dukascopy_fetch_ticks_budget_can_be_set_per_call(monkeypatch):
+    requested: list[str] = []
+    monkeypatch.setattr(DukascopySource, "_get", lambda _self, url: requested.append(url) or b"")
+    source = DukascopySource(max_hours=2)
+    source.fetch_ticks("USD/JPY", since_ms=T0)
+    assert len(requested) == 2
+    source.fetch_ticks("USD/JPY", since_ms=T0, max_hours=5)
+    assert len(requested) == 2 + 5, "the per-call budget overrides the instance's"

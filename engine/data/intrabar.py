@@ -66,6 +66,15 @@ PATH_LABEL = f"{STEP}-path"
 # Same history depth the OHLCV sync seeds a brand-new series with.
 _SEED_DAYS = 365 * 3
 
+# Hourly files one sync run may walk while the path backfills. The OHLCV sync's one-week
+# budget assumed the */30 cron fires 48 times a day; on this repo it has fired ~5 times a
+# day (GitHub throttles scheduled workflows), which would stretch a three-year backfill
+# to ~31 days. Thirty days per run finishes it in about a week. The total number of
+# requests (and of Actions minutes spent on them) is the same either way; ~3,600 a day
+# is still under the ~8,000 a day the one-week budget was sized for. Once caught up, a
+# run only walks the few hours since the last stored minute.
+BACKFILL_MAX_HOURS = 24 * 30
+
 # Stored columns. ``bid_open`` is absolute integer points; every other price column is
 # relative, so the file holds small integers rather than six-digit ones.
 _COLUMNS: tuple[str, ...] = (
@@ -301,9 +310,10 @@ def _first_bar_ts(ohlcv: OHLCVStore, source: str, symbol: str, timeframes) -> in
 def sync_intrabar(settings, universe, *, store=None, ohlcv=None, client_for=None) -> list:
     """Extend the path of every instrument whose bar feed carries both quote sides.
 
-    Walks forward from the last stored minute exactly like the OHLCV sync (same hourly
-    request budget per run), and starts a brand-new path where that instrument's bars
-    start, so the two cover the same history once the backfill has caught up.
+    Walks forward from the last stored minute like the OHLCV sync, up to
+    ``BACKFILL_MAX_HOURS`` hourly files per run, and starts a brand-new path where that
+    instrument's bars start, so the two cover the same history once the backfill has
+    caught up.
     """
     from engine.data.sources import make_source
     from engine.data.sync import SyncResult
@@ -331,7 +341,9 @@ def sync_intrabar(settings, universe, *, store=None, ohlcv=None, client_for=None
             if since is None:
                 seed = datetime.now(UTC) - timedelta(days=_SEED_DAYS)
                 since = int(seed.timestamp() * 1000)
-            ticks = client(spec.source).fetch_ticks(spec.symbol, since_ms=since)
+            ticks = client(spec.source).fetch_ticks(
+                spec.symbol, since_ms=since, max_hours=BACKFILL_MAX_HOURS
+            )
             total = store.upsert(spec.source, spec.symbol, ticks_to_path(ticks, spec.symbol))
             results.append(SyncResult(spec.source, spec.symbol, PATH_LABEL, total, ok=True))
         except Exception as exc:  # noqa: BLE001 - one bad series must not abort the run
