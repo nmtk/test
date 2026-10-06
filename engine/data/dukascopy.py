@@ -228,6 +228,20 @@ class DukascopySource:
     def fetch_ohlcv(
         self, symbol: str, timeframe: str, since_ms: int | None = None, limit: int | None = None
     ) -> pd.DataFrame:
+        ticks = self.fetch_ticks(symbol, since_ms)
+        if len(ticks) == 0:
+            return empty_ohlcv()
+        bars = ticks_to_ohlcv(ticks, timeframe)
+        if limit is not None and len(bars) > limit:
+            bars = bars.tail(limit).reset_index(drop=True)
+        return bars
+
+    def fetch_ticks(self, symbol: str, since_ms: int | None = None) -> pd.DataFrame:
+        """Raw ``ts``/``bid``/``ask`` ticks from the hour containing ``since_ms`` onward.
+
+        Same request budget as :meth:`fetch_ohlcv` (at most ``max_hours`` hourly files,
+        never the still-forming current hour). Also refreshes ``last_spread``.
+        """
         start = (
             datetime.fromtimestamp(since_ms / 1000, tz=UTC) if since_ms is not None else None
         ) or EPOCH
@@ -264,15 +278,14 @@ class DukascopySource:
             fetched += 1
 
         if not frames:
-            self.last_spread = spread_stats_bps(pd.DataFrame({"bid": [], "ask": []}))
-            return empty_ohlcv()
+            empty = decode_bi5(b"", symbol, start)
+            self.last_spread = spread_stats_bps(empty)
+            return empty
 
         ticks = pd.concat(frames, ignore_index=True).sort_values("ts", kind="mergesort")
+        ticks = ticks.reset_index(drop=True)
         self.last_spread = spread_stats_bps(ticks)
-        bars = ticks_to_ohlcv(ticks, timeframe)
-        if limit is not None and len(bars) > limit:
-            bars = bars.tail(limit).reset_index(drop=True)
-        return bars
+        return ticks
 
     def _client(self):
         """A pooled session — a single run makes up to ``max_hours`` sequential requests."""

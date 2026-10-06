@@ -15,8 +15,9 @@ from dataclasses import dataclass, field
 from engine.backtest import periods_per_year
 from engine.core.config import Settings, load_universe
 from engine.core.types import AssetClass
+from engine.data.intrabar import IntrabarStore, prepare_intrabar_bars
 from engine.data.store import OHLCVStore
-from engine.execution.broker import research_costs
+from engine.execution.broker import intrabar_research_costs, research_costs
 from engine.features.context import ContextAugmenter
 from engine.gp.evolve import GPConfig
 from engine.orchestration.population import Population, StrategyRecord
@@ -34,6 +35,7 @@ DEFAULT_ARCHETYPES = (
     "zscore_reversion",
     "macro_flow",
     "wemof",
+    "wemof_tick",
     "trade_balance",
 )
 MIN_BARS = 300
@@ -146,6 +148,7 @@ def run_research(
     # both the archetype search and GP evolve over flow-conditional features. The paper
     # and live executors apply the identical augmentation (see orchestrator/live).
     augmenter = ContextAugmenter.from_settings(settings, universe)
+    intrabar_store = IntrabarStore(settings.data_dir / "intrabar")
     population = Population(settings.state_dir / "population.db")
     ledger = TrialLedger.load(settings.state_dir / "trial_ledger.json")
     thresholds = thresholds or GateThresholds()
@@ -200,17 +203,39 @@ def run_research(
                 last_ts = int(bars["ts"].iloc[-1])
                 for strat_name in archetypes:
                     family = f"{strat_name}:{symbol}:{tf}"
+                    strategy_cls = get_strategy(strat_name)
+                    run_bars, run_fee, run_slip = bars, entry_fee, entry_slip
+                    run_only, inherited = entry.only, 0
+                    if getattr(strategy_cls, "requires_intrabar", False):
+                        # Skipped *before* the search, so nights without a fully synced
+                        # path spend nothing from the trial ledger.
+                        if tf not in strategy_cls.intrabar_timeframes:
+                            continue
+                        run_bars, _ = prepare_intrabar_bars(
+                            bars, intrabar_store, source=source, symbol=symbol, timeframe=tf
+                        )
+                        if run_bars is None or len(run_bars) < min_bars:
+                            continue
+                        run_fee, run_slip = intrabar_research_costs(asset_class)
+                        if fee_bps is not None:
+                            run_fee = fee_bps
+                        if slippage_bps is not None:
+                            run_slip = slippage_bps
+                        # No executor can place its intrabar brackets (see wemof_tick.py).
+                        run_only = True
+                        inherited = ledger.get(f"{strategy_cls.parent_family}:{symbol}:{tf}")
                     report = discover_challenger(
-                        bars,
-                        get_strategy(strat_name),
+                        run_bars,
+                        strategy_cls,
                         n_trials=trials,
                         ppy=ppy,
-                        fee_bps=entry_fee,
-                        slippage_bps=entry_slip,
+                        fee_bps=run_fee,
+                        slippage_bps=run_slip,
                         seed=seed,
                         thresholds=thresholds,
                         ledger=ledger,
                         family=family,
+                        inherited_trials=inherited,
                     )
                     population.upsert(
                         _record_for(
@@ -221,11 +246,11 @@ def run_research(
                             source=source,
                             tf=tf,
                             ppy=ppy,
-                            last_ts=last_ts,
+                            last_ts=int(run_bars["ts"].iloc[-1]),
                             existing=population.get(family),
-                            fee_bps=entry_fee,
-                            slippage_bps=entry_slip,
-                            research_only=entry.only,
+                            fee_bps=run_fee,
+                            slippage_bps=run_slip,
+                            research_only=run_only,
                         )
                     )
                     summary.n_evaluated += 1

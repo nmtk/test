@@ -180,25 +180,31 @@ class WemofReversal(Strategy):
 
     # -- position construction ---------------------------------------------------------
 
-    def weights(self, bars: pd.DataFrame) -> pd.Series:
+    def entry_signals(self, bars: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, pd.Series]:
+        """``(long, short, middle)``: unexplained band overshoots at each bar's close.
+
+        A bar can only signal once its bands exist. Shared with ``wemof_tick``, which
+        trades the same entries with intrabar exits.
+        """
         close = bars["close"].astype(float)
         lower, middle, upper = bollinger(close, self.bb_window, self.bb_sigma)
 
         touch_long = (bars["low"].astype(float) < lower).fillna(False)
         touch_short = (bars["high"].astype(float) > upper).fillna(False)
-        enter_long = touch_long & ~self._explained(bars, side=1)
-        enter_short = touch_short & ~self._explained(bars, side=-1)
+        ready = (lower.notna() & middle.notna()).to_numpy()
+        enter_long = (touch_long & ~self._explained(bars, side=1)).to_numpy() & ready
+        enter_short = (touch_short & ~self._explained(bars, side=-1)).to_numpy() & ready
+        return enter_long, enter_short, middle
 
-        band_ready = lower.notna() & middle.notna()
+    def weights(self, bars: pd.DataFrame) -> pd.Series:
+        close = bars["close"].astype(float)
+        long_sig, short_sig, middle = self.entry_signals(bars)
         atr_series = atr(bars["high"], bars["low"], close, self.bb_window)
 
         # Sequential because a scalp's state is path-dependent: whether bar t opens a
         # position depends on whether an earlier entry is still running.
         n = len(bars)
         position = np.zeros(n, dtype=float)
-        long_sig = enter_long.to_numpy()
-        short_sig = enter_short.to_numpy()
-        ready = band_ready.to_numpy()
         px = close.to_numpy(dtype=float)
         mid = middle.to_numpy(dtype=float)
         atr_vals = atr_series.to_numpy(dtype=float)
@@ -217,7 +223,7 @@ class WemofReversal(Strategy):
                     entry_px = 0.0
                     entry_atr = 0.0
                     held = 0
-            if side == 0 and ready[i]:
+            if side == 0:
                 if long_sig[i]:
                     side = 1
                 elif short_sig[i]:

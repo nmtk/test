@@ -71,6 +71,8 @@ instruments:
   # deployment researches USD/JPY and trades nothing.
   #
   # 1h and 1d are derived from 5m by resampling (see DERIVE_SOURCES in engine/data/sync.py).
+  # Because the feed is two-sided, sync-data also keeps a 1-minute bid/ask path beside the
+  # bars (data/intrabar/, see engine/data/intrabar.py) — what `wemof_tick` exits on.
   - symbol: "USD/JPY"
     asset_class: fx
     venue: oanda

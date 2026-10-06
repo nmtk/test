@@ -1,8 +1,8 @@
 """Command-line entry point: ``trade <command>`` (also ``python -m engine``).
 
-Commands: ``version``, ``status``, ``show-universe``, ``sync-data``, ``list-strategies``,
-``backtest``, ``validate``, ``seed-champions``, ``paper-step``, ``live-step``, ``report``,
-``research``, ``promote``.
+Commands: ``version``, ``status``, ``macro-status``, ``intrabar-status``, ``show-universe``,
+``sync-data``, ``list-strategies``, ``backtest``, ``validate``, ``seed-champions``,
+``paper-step``, ``live-step``, ``report``, ``research``, ``promote``.
 """
 
 from __future__ import annotations
@@ -14,13 +14,24 @@ from datetime import UTC, datetime
 import numpy as np
 
 from engine import __version__
-from engine.backtest import periods_per_year, run_backtest
+from engine.backtest import backtest_strategy, periods_per_year
+from engine.core.clock import timeframe_seconds
 from engine.core.config import load_settings, load_universe
 from engine.core.killswitch import is_engaged
 from engine.core.types import AssetClass
+from engine.data.intrabar import (
+    INTRABAR_SOURCES,
+    MIN_COVERAGE,
+    PATH_LABEL,
+    IntrabarStore,
+    coverage,
+    prepare_intrabar_bars,
+    sync_intrabar,
+)
 from engine.data.sources import KEYLESS_SOURCES
 from engine.data.store import OHLCVStore
 from engine.data.sync import sync_context, sync_universe
+from engine.execution.broker import intrabar_research_costs
 from engine.features.context import ContextAugmenter
 from engine.orchestration.champions import Allocation, Champions, save_champions
 from engine.orchestration.live import run_live_step
@@ -99,12 +110,49 @@ def _cmd_macro_status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_intrabar_status(_args: argparse.Namespace) -> int:
+    """Report how much of each instrument's bars the intrabar path covers.
+
+    Intrabar strategies are skipped by research until coverage reaches ``MIN_COVERAGE``,
+    which is silent by design (it spares the trial ledger) — this makes it visible.
+    """
+    settings = load_settings()
+    universe = load_universe(settings.universe_path)
+    ohlcv = OHLCVStore(settings.data_dir / "ohlcv")
+    paths = IntrabarStore(settings.data_dir / "intrabar")
+    entries = [e for e in universe.entries if e.live_source.source in INTRABAR_SOURCES]
+    if not entries:
+        print("no instrument uses a two-sided (bid/ask) feed")
+        return 0
+
+    print(f"=== intrabar path ({PATH_LABEL}) ===")
+    for entry in entries:
+        source, symbol = entry.live_source.source, entry.live_source.symbol
+        path = paths.read(source, symbol)
+        if len(path) == 0:
+            print(f"  {source:<10} {symbol:<10} (no path yet — run sync-data)")
+            continue
+        first = datetime.fromtimestamp(path.ts[0] / 1000, tz=UTC).strftime("%Y-%m-%d")
+        last = datetime.fromtimestamp(path.ts[-1] / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%MZ")
+        print(f"  {source:<10} {symbol:<10} minutes={len(path)}  {first} .. {last}")
+        for tf in entry.timeframes:
+            bar_ms = timeframe_seconds(tf) * 1000
+            bars = ohlcv.read(source, symbol, tf)
+            if len(bars) == 0 or bar_ms % path.step_ms:
+                continue
+            cov = coverage(bars["ts"].to_numpy(dtype="int64"), bar_ms, path)
+            state = "researched" if cov >= MIN_COVERAGE else "waiting for backfill"
+            print(f"    {tf:<4} coverage={cov:.1%} of {len(bars)} bars  -> {state}")
+    return 0
+
+
 def _cmd_sync_data(args: argparse.Namespace) -> int:
     settings = load_settings()
     universe = load_universe(settings.universe_path)
     store = OHLCVStore(settings.data_dir / "ohlcv")
     results = sync_universe(settings, universe, store, include_research=args.research)
     results.extend(sync_context(settings, store))
+    results.extend(sync_intrabar(settings, universe, ohlcv=store))
 
     failures = 0
     keyless_failures: list[str] = []
@@ -157,6 +205,38 @@ def _parse_params(items: list[str] | None) -> dict:
     return params
 
 
+def _costs(args: argparse.Namespace, strategy_cls, asset_class: AssetClass) -> tuple[float, float]:
+    """CLI costs: explicit flags win; otherwise intrabar strategies pay only the venue
+    markup over their measured spread, and everything else the long-standing 10+5bps."""
+    if getattr(strategy_cls, "requires_intrabar", False):
+        fee, slip = intrabar_research_costs(asset_class)
+    else:
+        fee, slip = 10.0, 5.0
+    return (
+        fee if args.fee_bps is None else args.fee_bps,
+        slip if args.slippage_bps is None else args.slippage_bps,
+    )
+
+
+def _with_intrabar(bars, strategy_cls, settings, *, source: str, symbol: str, timeframe: str):
+    """Attach the intrabar path for a strategy that needs one; ``None`` if there is none."""
+    if not getattr(strategy_cls, "requires_intrabar", False):
+        return bars
+    attached, cov = prepare_intrabar_bars(
+        bars,
+        IntrabarStore(settings.data_dir / "intrabar"),
+        source=source,
+        symbol=symbol,
+        timeframe=timeframe,
+        min_coverage=0.0,
+    )
+    if attached is None or len(attached) == 0:
+        print(f"no intrabar path for {source}:{symbol}:{timeframe} — run sync-data first")
+        return None
+    print(f"intrabar path covers {cov:.1%} of bars; using the {len(attached)} it covers")
+    return attached
+
+
 def _cmd_backtest(args: argparse.Namespace) -> int:
     settings = load_settings()
     universe = load_universe(settings.universe_path)
@@ -175,18 +255,34 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     augmenter = ContextAugmenter.from_settings(settings, universe)
     bars = augmenter.augment(bars, source=source, symbol=args.symbol, timeframe=args.timeframe)
 
-    strategy = get_strategy(args.strategy)(**_parse_params(args.param))
-    weights = strategy.weights(bars)
-    result = run_backtest(
-        bars["close"],
-        weights,
-        fee_bps=args.fee_bps,
-        slippage_bps=args.slippage_bps,
-        periods_per_year=periods_per_year(args.timeframe, asset_class),
+    strategy_cls = get_strategy(args.strategy)
+    bars = _with_intrabar(
+        bars, strategy_cls, settings, source=source, symbol=args.symbol, timeframe=args.timeframe
     )
+    if bars is None:
+        return 1
+    fee_bps, slippage_bps = _costs(args, strategy_cls, asset_class)
+    strategy = strategy_cls(**_parse_params(args.param))
+    ppy = periods_per_year(args.timeframe, asset_class)
+    sim = None
+    if callable(getattr(strategy, "simulate", None)):
+        sim = strategy.simulate(
+            bars, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
+        )
+        result = sim.result
+    else:
+        result = backtest_strategy(
+            strategy, bars, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
+        )
     print(f"{strategy.describe()} on {source}:{args.symbol}:{args.timeframe} ({len(bars)} bars)")
+    print(f"  costs          fee={fee_bps}bps slippage={slippage_bps}bps per fill")
     for key, value in result.stats.items():
         print(f"  {key:<14} {value:.4f}")
+    if sim is not None:
+        reasons = sim.trades["reason"].value_counts().to_dict() if len(sim.trades) else {}
+        print(f"  exits          {reasons}")
+        print(f"  ambiguous      {sim.ambiguous_share:.2%} of trades (resolved to the stop)")
+        print(f"  unfilled       {sim.n_unfilled} signals with no quote before the next bar")
     return 0
 
 
@@ -222,14 +318,20 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     bars = augmenter.augment(bars, source=source, symbol=args.symbol, timeframe=args.timeframe)
 
     strategy_cls = get_strategy(args.strategy)
+    bars = _with_intrabar(
+        bars, strategy_cls, settings, source=source, symbol=args.symbol, timeframe=args.timeframe
+    )
+    if bars is None:
+        return 1
+    fee_bps, slippage_bps = _costs(args, strategy_cls, asset_class)
     grid = _grid_from_space(strategy_cls.param_space, n=args.grid)
     ledger = TrialLedger.load(settings.state_dir / "trial_ledger.json")
     report = evaluate_candidate_family(
         bars,
         strategy_cls,
         grid,
-        fee_bps=args.fee_bps,
-        slippage_bps=args.slippage_bps,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
         ppy=periods_per_year(args.timeframe, asset_class),
         thresholds=GateThresholds(),
         ledger=ledger,
@@ -435,6 +537,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "macro-status", help="show which trade-flow series synced and when each went public"
     ).set_defaults(func=_cmd_macro_status)
+    sub.add_parser(
+        "intrabar-status", help="show intrabar bid/ask path coverage (gates wemof_tick research)"
+    ).set_defaults(func=_cmd_intrabar_status)
     sub.add_parser("show-universe", help="print the configured universe").set_defaults(
         func=_cmd_show_universe
     )
@@ -455,8 +560,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument("--timeframe", default="1d")
     p_bt.add_argument("--source", default=None, help="data source (default: from universe)")
     p_bt.add_argument("--param", action="append", help="strategy param, e.g. lookback=50")
-    p_bt.add_argument("--fee-bps", type=float, default=10.0)
-    p_bt.add_argument("--slippage-bps", type=float, default=5.0)
+    p_bt.add_argument("--fee-bps", type=float, default=None, help="default 10 (intrabar: venue)")
+    p_bt.add_argument(
+        "--slippage-bps", type=float, default=None, help="default 5 (intrabar: venue markup)"
+    )
     p_bt.set_defaults(func=_cmd_backtest)
 
     p_seed = sub.add_parser("seed-champions", help="bootstrap a champions.json to paper-trade")
@@ -503,8 +610,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("--timeframe", default="1d")
     p_val.add_argument("--source", default=None, help="data source (default: from universe)")
     p_val.add_argument("--grid", type=int, default=5, help="grid points per parameter")
-    p_val.add_argument("--fee-bps", type=float, default=10.0)
-    p_val.add_argument("--slippage-bps", type=float, default=5.0)
+    p_val.add_argument("--fee-bps", type=float, default=None, help="default 10 (intrabar: venue)")
+    p_val.add_argument(
+        "--slippage-bps", type=float, default=None, help="default 5 (intrabar: venue markup)"
+    )
     p_val.set_defaults(func=_cmd_validate)
 
     return parser

@@ -60,6 +60,9 @@ def gather_members(
     """
     members: list[dict] = []
     for name in archetypes:
+        if getattr(get_strategy(name), "requires_intrabar", False):
+            # Fills inside the bar: it has no weight series to blend into a pool.
+            continue
         family = f"{name}:{symbol}:{timeframe}"
         row = population.get(family)
         if not row or row["status"] == "retired":
