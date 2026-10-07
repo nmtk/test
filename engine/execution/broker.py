@@ -118,12 +118,12 @@ def research_costs(asset_class: AssetClass) -> tuple[float, float]:
 # Costs for strategies that fill on the bid/ask path (engine/backtest/intrabar.py). Those
 # already pay the *measured* spread on every fill, so the figures above — which stand in
 # for the spread in mid-price backtests — would charge it twice. What remains is the gap
-# between the data's book and the execution venue's: the path is Dukascopy's ECN quote
-# (~0.2-0.5 pips on USD/JPY) while a retail venue quotes wider — on the order of a pip
-# for OANDA's standard pricing, or a raw spread plus commission. 0.3bps per fill (~0.45
-# pip at 150, ~0.9 pip a round trip) tops the measured spread up to about that, erring
-# wide. A venue known to be tighter is passed explicitly (`--fee-bps/--slippage-bps`);
-# it is never assumed.
+# between the data's book and the execution venue's: the path is Dukascopy's quote,
+# measured on USD/JPY at a median 0.6 pip (p90 0.9, Aug-Nov 2023), while a retail venue
+# is on the order of a pip all-in for OANDA's standard pricing, or a raw spread plus
+# commission. 0.3bps per fill (~0.45 pip at 150, ~0.9 pip a round trip) puts the all-in
+# round trip near 1.5 pips — wider than that venue, deliberately. A venue known to be
+# tighter is passed explicitly (`--fee-bps/--slippage-bps`); it is never assumed.
 INTRABAR_COSTS_BPS: dict[AssetClass, tuple[float, float]] = {
     AssetClass.FX: (0.0, 0.3),
 }
