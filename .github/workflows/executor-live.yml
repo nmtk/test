@@ -54,5 +54,14 @@ jobs:
             echo "no state changes"
           else
             git commit -m "state: live step [skip ci]"
-            git push
+            for attempt in 1 2 3 4 5; do
+              git push && break
+              echo "push rejected by a concurrent write; rebasing (attempt $attempt)"
+              if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
+                git rebase --abort || true
+                echo "::error::rebase conflict — refusing to guess, leaving the branch untouched"
+                exit 1
+              fi
+              sleep $((RANDOM % 5 + 2))
+            done
           fi

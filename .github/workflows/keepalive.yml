@@ -21,4 +21,13 @@ jobs:
           git config user.name "trade-bot"
           git config user.email "trade-bot@users.noreply.github.com"
           git commit --allow-empty -m "chore: keepalive [skip ci]"
-          git push
+          for attempt in 1 2 3 4 5; do
+            git push && break
+            echo "push rejected by a concurrent write; rebasing (attempt $attempt)"
+            if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
+              git rebase --abort || true
+              echo "::error::rebase conflict — refusing to guess, leaving the branch untouched"
+              exit 1
+            fi
+            sleep $((RANDOM % 5 + 2))
+          done
