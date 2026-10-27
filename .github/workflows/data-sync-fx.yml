@@ -1,0 +1,57 @@
+name: data-sync-fx
+
+# Job A-fx: the Dukascopy tick feed and its 1-minute bid/ask path, on their own cron.
+#
+# Split out of data-sync for cost. This source is one HTTP request per instrument-hour,
+# so a run costs minutes where the other sources cost seconds — during the USD/JPY
+# backfill a single run averaged 27 minutes. Leaving that on a */30 cron meant the job
+# ran essentially continuously and consumed ~3,200 Actions minutes a month against a
+# private repo's 2,000-minute allowance, which is what stopped the whole pipeline.
+#
+# The backfill is done, so incremental runs only walk the hours since the last bar.
+# Every 6 hours keeps the store within a bar or two of live at a fraction of the cost.
+
+on:
+  schedule:
+    - cron: "20 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-sync-fx
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync
+      - name: Sync FX (Dukascopy ticks + intrabar path)
+        run: uv run trade sync-data --only-source dukascopy
+      - name: Commit data
+        run: |
+          git config user.name "trade-bot"
+          git config user.email "trade-bot@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "no data changes"
+          else
+            git commit -m "data: sync FX [skip ci]"
+            for attempt in 1 2 3 4 5; do
+              git push && break
+              echo "push rejected by a concurrent write; rebasing (attempt $attempt)"
+              if ! git pull --rebase origin "${GITHUB_REF_NAME}"; then
+                git rebase --abort || true
+                echo "::error::rebase conflict — refusing to guess, leaving the branch untouched"
+                exit 1
+              fi
+              sleep $((RANDOM % 5 + 2))
+            done
+          fi

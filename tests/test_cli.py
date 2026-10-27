@@ -94,3 +94,82 @@ def test_stooq_stays_best_effort(monkeypatch):
 
     assert "stooq" not in KEYLESS_SOURCES
     assert {"fred", "dukascopy"} <= KEYLESS_SOURCES
+
+
+def test_sync_data_can_skip_an_expensive_source(monkeypatch, capsys):
+    """Sources are not equally cheap, so the cron that runs often must be able to drop one.
+
+    Dukascopy is one HTTP request per instrument-hour; leaving it on the frequent cron
+    cost ~3,200 Actions minutes a month against a private repo's 2,000, which stopped the
+    whole pipeline for ten days.
+    """
+    import engine.cli as cli_mod
+    from engine.data.sync import SyncResult
+
+    monkeypatch.setattr(
+        cli_mod,
+        "sync_universe",
+        lambda *a, **k: [
+            SyncResult("bitbank", "BTC/JPY", "1h", 100, ok=True),
+            SyncResult("dukascopy", "USD/JPY", "5m", 500, ok=True),
+        ],
+    )
+    monkeypatch.setattr(cli_mod, "sync_context", lambda *a, **k: [])
+    intrabar_calls = []
+    monkeypatch.setattr(cli_mod, "sync_intrabar", lambda *a, **k: intrabar_calls.append(1) or [])
+
+    assert cli_mod.main(["sync-data", "--skip-source", "dukascopy"]) == 0
+    out = capsys.readouterr().out
+    assert "bitbank" in out
+    assert "dukascopy" not in out
+    assert intrabar_calls == [], "the intrabar path belongs to the skipped source"
+
+
+def test_sync_data_can_run_only_the_expensive_source(monkeypatch, capsys):
+    """The other half of the split: the slow cron syncs that source and nothing else."""
+    import engine.cli as cli_mod
+    from engine.data.sync import SyncResult
+
+    monkeypatch.setattr(
+        cli_mod,
+        "sync_universe",
+        lambda *a, **k: [
+            SyncResult("bitbank", "BTC/JPY", "1h", 100, ok=True),
+            SyncResult("dukascopy", "USD/JPY", "5m", 500, ok=True),
+        ],
+    )
+    monkeypatch.setattr(
+        cli_mod,
+        "sync_context",
+        lambda *a, **k: [
+            SyncResult("fred", "DEXJPUS", "1d", 10, ok=True),
+        ],
+    )
+    intrabar_calls = []
+    monkeypatch.setattr(cli_mod, "sync_intrabar", lambda *a, **k: intrabar_calls.append(1) or [])
+
+    assert cli_mod.main(["sync-data", "--only-source", "dukascopy"]) == 0
+    out = capsys.readouterr().out
+    assert "dukascopy" in out
+    assert "bitbank" not in out and "fred" not in out
+    assert intrabar_calls == [1], "the intrabar path must ride with its own source"
+
+
+def test_every_source_still_syncs_by_default(monkeypatch, capsys):
+    import engine.cli as cli_mod
+    from engine.data.sync import SyncResult
+
+    monkeypatch.setattr(
+        cli_mod,
+        "sync_universe",
+        lambda *a, **k: [
+            SyncResult("bitbank", "BTC/JPY", "1h", 100, ok=True),
+            SyncResult("dukascopy", "USD/JPY", "5m", 500, ok=True),
+        ],
+    )
+    monkeypatch.setattr(cli_mod, "sync_context", lambda *a, **k: [])
+    monkeypatch.setattr(cli_mod, "sync_intrabar", lambda *a, **k: [])
+
+    assert cli_mod.main(["sync-data"]) == 0
+    out = capsys.readouterr().out
+    assert "bitbank" in out and "dukascopy" in out

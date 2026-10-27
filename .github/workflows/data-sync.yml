@@ -37,9 +37,9 @@ jobs:
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
         run: |
           if [ "${{ inputs.research }}" = "true" ]; then
-            uv run trade sync-data --research
+            uv run trade sync-data --research --skip-source dukascopy
           else
-            uv run trade sync-data
+            uv run trade sync-data --skip-source dukascopy
           fi
       - name: Commit data
         run: |

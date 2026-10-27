@@ -150,9 +150,28 @@ def _cmd_sync_data(args: argparse.Namespace) -> int:
     settings = load_settings()
     universe = load_universe(settings.universe_path)
     store = OHLCVStore(settings.data_dir / "ohlcv")
-    results = sync_universe(settings, universe, store, include_research=args.research)
-    results.extend(sync_context(settings, store))
-    results.extend(sync_intrabar(settings, universe, ohlcv=store))
+
+    # Source selection exists for one reason: cost. Sources are not equally cheap. A ccxt
+    # or FRED series is one request; Dukascopy is one file per instrument-hour plus a
+    # 1-minute bid/ask path, which during a backfill runs for tens of minutes. Mixing
+    # both into a single frequent cron means paying the expensive one at the cheap one's
+    # cadence, so they get separate schedules.
+    only = set(args.only_source or [])
+    skip = set(args.skip_source or [])
+
+    def wanted(source: str) -> bool:
+        if only and source not in only:
+            return False
+        return source not in skip
+
+    results = [
+        r
+        for r in sync_universe(settings, universe, store, include_research=args.research)
+        if wanted(r.source)
+    ]
+    results.extend(r for r in sync_context(settings, store) if wanted(r.source))
+    if wanted("dukascopy"):
+        results.extend(sync_intrabar(settings, universe, ohlcv=store))
 
     failures = 0
     keyless_failures: list[str] = []
@@ -547,6 +566,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync = sub.add_parser("sync-data", help="incrementally fetch OHLCV into the store")
     p_sync.add_argument(
         "--research", action="store_true", help="also sync deep-history research sources"
+    )
+    p_sync.add_argument(
+        "--only-source",
+        action="append",
+        help="sync only these data sources (repeatable); see --skip-source",
+    )
+    p_sync.add_argument(
+        "--skip-source",
+        action="append",
+        help="sync everything except these data sources (repeatable)",
     )
     p_sync.set_defaults(func=_cmd_sync_data)
 
