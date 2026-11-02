@@ -37,6 +37,9 @@ DEFAULT_ARCHETYPES = (
     "wemof",
     "wemof_tick",
     "trade_balance",
+    "carry",
+    "session",
+    "vol_regime",
 )
 MIN_BARS = 300
 

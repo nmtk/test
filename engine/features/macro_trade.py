@@ -46,13 +46,32 @@ US_TRADE_RELEASE_LAG_DAYS = 40  # Census/BEA FT-900 ~5th business day of M+2
 
 # Series keys this layer understands. Missing keys degrade to neutral features, never to an
 # error — same contract as the cross-asset context layer.
-TRADE_KEYS: tuple[str, ...] = ("jp_exports", "jp_imports", "us_exports", "us_imports")
+TRADE_KEYS: tuple[str, ...] = (
+    "jp_exports",
+    "jp_imports",
+    "us_exports",
+    "us_imports",
+    "jp_rate",
+)
+
+# OECD publishes Japan's monthly long-term government bond yield with roughly a month's
+# delay. A monthly *average* rate is not even knowable until the month ends, so the lag
+# runs from the period end like the trade series.
+JP_RATE_RELEASE_LAG_DAYS = 35
+
+# How many percentage points of rate differential map to a feature near +/-1. Carry is
+# scaled absolutely rather than z-scored, because unlike a momentum signal the *level* is
+# what the trade actually earns: a 3-point gap is three points whatever the recent
+# distribution of gaps happened to be.
+CARRY_SCALE_PP = 2.5
 
 TRADE_FEATURE_NAMES: tuple[str, ...] = (
     "mac_jp_balance",
     "mac_us_balance",
     "mac_balance_diff",
     "mac_jp_import_cost",
+    "mac_carry_level",
+    "mac_carry_mom",
 )
 
 BALANCE_LOOKBACK_MONTHS = 12  # year-over-year change kills the seasonality in trade data
@@ -145,12 +164,85 @@ def _normalized_balance(exports: pd.Series, imports: pd.Series) -> pd.Series:
     return ((exports - imports) / total).replace([np.inf, -np.inf], np.nan)
 
 
+def _carry_features(
+    bars: pd.DataFrame,
+    *,
+    target_tf_ms: int,
+    staleness_ms: int,
+    us_rate: pd.DataFrame | None,
+    jp_rate: pd.DataFrame | None,
+    jp_lag: int,
+) -> tuple[pd.Series, pd.Series]:
+    """Rate-differential carry: ``(level, momentum)``, both bounded to ~[-1, 1].
+
+    The most documented anomaly in foreign exchange, and the one this engine had no way
+    to express: hold the higher-yielding currency and earn the gap, until the gap closes
+    or the trade unwinds all at once. For USD/JPY the gap is US minus Japan, so a
+    positive reading is dollar-supportive.
+
+    The two legs arrive on different clocks and are joined on their own terms — the US
+    yield is a daily market rate, known the day it prints; Japan's is a monthly average
+    published weeks later. Mixing those would read a figure before it existed.
+    """
+    neutral = pd.Series(0.0, index=bars.index)
+    if us_rate is None or jp_rate is None or len(us_rate) == 0 or len(jp_rate) == 0:
+        return neutral, neutral
+
+    day_ms = 86_400_000
+    us = pd.DataFrame(
+        {
+            "ts": us_rate["ts"].astype("int64"),
+            "rate": pd.to_numeric(us_rate["close"], errors="coerce"),
+        }
+    ).dropna()
+    us_joined = asof_causal_join(
+        bars["ts"],
+        us,
+        ["rate"],
+        target_tf_ms=target_tf_ms,
+        ctx_tf_ms=day_ms,
+        staleness_limit_ms=staleness_ms,
+    )["rate"]
+
+    jp_released = _released_frame(jp_rate, jp_lag)
+    if len(jp_released) <= BALANCE_LOOKBACK_MONTHS:
+        return neutral, neutral
+    jp_derived = pd.DataFrame(
+        {
+            "ts": jp_released["ts"].astype("int64"),
+            "rate": jp_released["value"],
+            "chg": jp_released["value"].diff(BALANCE_LOOKBACK_MONTHS),
+        }
+    )
+    jp_joined = asof_causal_join(
+        bars["ts"],
+        jp_derived,
+        ["rate", "chg"],
+        target_tf_ms=target_tf_ms,
+        ctx_tf_ms=0,
+        staleness_limit_ms=staleness_ms,
+    )
+
+    # Both legs must be public on the bar, or the "differential" is one leg wearing the
+    # name of a comparison — the same per-bar trap the balance differential fell into.
+    live = us_joined.notna() & jp_joined["rate"].notna()
+    diff = (us_joined - jp_joined["rate"]).where(live)
+    level = pd.Series(np.tanh(diff / CARRY_SCALE_PP), index=bars.index).fillna(0.0)
+
+    # Direction of the gap, carried by the Japanese leg's year-over-year change: it moves
+    # on a monthly grid and is the slower, more persistent half of the pair. A falling
+    # Japanese yield widens the gap, hence the sign.
+    widening = _tanh_z_monthly(-jp_joined["chg"]).where(live)
+    return level, widening.fillna(0.0)
+
+
 def build_trade_features(
     bars: pd.DataFrame,
     *,
     timeframe: str,
     frames: dict[str, pd.DataFrame] | None = None,
     lags: dict[str, int] | None = None,
+    ctx_frames: dict[str, pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     """Compute every ``mac_*`` trade-flow feature for ``bars`` (causal, all in ~[-1, 1]).
 
@@ -233,6 +325,15 @@ def build_trade_features(
     # published yet on the bar being computed.
     diff = ((us_balance - jp_balance) / 2.0).where(jp_live & us_live, 0.0).fillna(0.0)
 
+    carry_level, carry_mom = _carry_features(
+        bars,
+        target_tf_ms=target_tf_ms,
+        staleness_ms=staleness_ms,
+        us_rate=(ctx_frames or {}).get("us10y"),
+        jp_rate=frames.get("jp_rate"),
+        jp_lag=lags.get("jp_rate", JP_RATE_RELEASE_LAG_DAYS),
+    )
+
     features = {
         "mac_jp_balance": jp_balance,
         "mac_us_balance": us_balance,
@@ -240,6 +341,8 @@ def build_trade_features(
         # dollar-supportive against the yen = USD/JPY up.
         "mac_balance_diff": diff,
         "mac_jp_import_cost": jp_import_cost,
+        "mac_carry_level": carry_level,
+        "mac_carry_mom": carry_mom,
     }
     out = pd.DataFrame(features, index=bars.index)
     assert list(out.columns) == list(TRADE_FEATURE_NAMES) and len(out) == len(bars)

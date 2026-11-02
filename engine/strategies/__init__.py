@@ -17,12 +17,15 @@ from engine.strategies.base import (
     register_xs,
 )
 from engine.strategies.breakout import DonchianBreakout
+from engine.strategies.carry import RateCarry
 from engine.strategies.cross_sectional import CrossSectionalMomentum
 from engine.strategies.ensemble import EnsembleStrategy
 from engine.strategies.macro_flow import MacroFlowTrend
 from engine.strategies.mean_reversion import ZScoreReversion
 from engine.strategies.momentum import MovingAverageCross, TimeSeriesMomentum
+from engine.strategies.session import SessionDrift
 from engine.strategies.trade_balance import TradeBalanceUsdJpy
+from engine.strategies.vol_regime import VolRegimeBreak
 from engine.strategies.wemof import WemofReversal
 from engine.strategies.wemof_tick import WemofTick
 
@@ -45,4 +48,7 @@ __all__ = [
     "WemofReversal",
     "WemofTick",
     "TradeBalanceUsdJpy",
+    "RateCarry",
+    "SessionDrift",
+    "VolRegimeBreak",
 ]

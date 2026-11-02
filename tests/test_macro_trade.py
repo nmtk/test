@@ -267,3 +267,62 @@ def test_differential_matches_the_legs_where_both_are_live():
     assert live.sum() > 100
     expected = (out.loc[live, "mac_us_balance"] - out.loc[live, "mac_jp_balance"]) / 2.0
     pd.testing.assert_series_equal(out.loc[live, "mac_balance_diff"], expected, check_names=False)
+
+
+# -- carry ---------------------------------------------------------------------------
+
+
+def _daily_rate(start: str, n: int, values) -> pd.DataFrame:
+    """A daily market rate, as FRED serves DGS10: a level, so OHLC all equal."""
+    idx = pd.date_range(start, periods=n, freq="D", tz="UTC")
+    ts = (idx.astype("datetime64[ms, UTC]").astype("int64")).to_numpy()
+    close = np.asarray(values, dtype=float)
+    return pd.DataFrame(
+        {"ts": ts, "open": close, "high": close, "low": close, "close": close, "volume": 0.0}
+    )
+
+
+def test_carry_is_non_zero_once_both_legs_exist():
+    """The check that would have caught a silently-flat carry archetype.
+
+    The two legs arrive on different clocks — a daily market yield and a monthly
+    published one — so the feature can look perfectly healthy in a unit test of the
+    strategy and still be all zeros in production.
+    """
+    n_days, n_months = 3000, 100
+    us = _daily_rate("2015-01-01", n_days, np.linspace(2.0, 4.5, n_days))
+    jp = _monthly("2015-01-01", n_months, np.linspace(0.8, 0.1, n_months))
+    bars = _daily_bars("2015-01-01", n_days)
+
+    out = build_trade_features(
+        bars, timeframe="1d", frames={"jp_rate": jp}, ctx_frames={"us10y": us}
+    )
+    live = out["mac_carry_level"] != 0.0
+    assert live.sum() > 500, "carry must actually turn on when both legs are present"
+    assert out["mac_carry_level"].abs().max() <= 1.0
+    # US rising from 2.0 to 4.5 while Japan falls 0.8 -> 0.1 widens the gap, and a wider
+    # gap in the dollar's favour reads positive.
+    assert out.loc[live, "mac_carry_level"].iloc[-1] > 0.0
+
+
+def test_carry_is_neutral_while_either_leg_is_missing():
+    """Same per-bar discipline as the balance differential: one leg is not a spread."""
+    n_days = 2000
+    us = _daily_rate("2015-01-01", n_days, np.linspace(2.0, 4.0, n_days))
+    bars = _daily_bars("2015-01-01", n_days)
+
+    only_us = build_trade_features(bars, timeframe="1d", frames={}, ctx_frames={"us10y": us})
+    assert (only_us["mac_carry_level"] == 0.0).all()
+
+    jp = _monthly("2015-01-01", 60, np.linspace(0.8, 0.2, 60))
+    only_jp = build_trade_features(bars, timeframe="1d", frames={"jp_rate": jp}, ctx_frames={})
+    assert (only_jp["mac_carry_level"] == 0.0).all()
+
+
+def test_carry_respects_the_japanese_release_lag():
+    """Japan's monthly rate is not public on the first of the month it describes."""
+    from engine.features.macro_trade import JP_RATE_RELEASE_LAG_DAYS, availability_ts
+
+    january = pd.Series([_ms("2026-01-01")])
+    public = availability_ts(january, JP_RATE_RELEASE_LAG_DAYS).iloc[0]
+    assert pd.Timestamp(public, unit="ms", tz="UTC") >= pd.Timestamp("2026-03-01", tz="UTC")

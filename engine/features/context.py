@@ -304,7 +304,13 @@ class ContextAugmenter:
 
         trade_frames, trade_lags = self._trade_frames()
         trade = build_trade_features(
-            bars, timeframe=timeframe, frames=trade_frames, lags=trade_lags
+            bars,
+            timeframe=timeframe,
+            frames=trade_frames,
+            lags=trade_lags,
+            # Carry needs one leg from each family: a daily market yield and a monthly
+            # published one.
+            ctx_frames=self._context_frames(),
         )
         for col in trade.columns:
             out[col] = trade[col]
