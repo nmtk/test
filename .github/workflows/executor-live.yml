@@ -42,6 +42,12 @@ jobs:
           BITBANK_API_SECRET: ${{ secrets.BITBANK_API_SECRET }}
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+          # Spot FX. Without these the broker factory returns None for OANDA and a
+          # USD/JPY champion would simply never be traded — silently, which is the
+          # failure mode this repo keeps having to design against.
+          OANDA_API_TOKEN: ${{ secrets.OANDA_API_TOKEN }}
+          OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }}
+          OANDA_PRACTICE: "false"
         run: uv run trade live-step
       - name: Report
         run: uv run trade report --mode live
