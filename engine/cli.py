@@ -447,7 +447,7 @@ def _cmd_research(args: argparse.Namespace) -> int:
     )
     print(
         f"research: evaluated={summary.n_evaluated} passed={summary.n_passed} "
-        f"(passed -> incubating; run `trade promote`)"
+        f"held={summary.n_held} (passed -> incubating; run `trade promote`)"
     )
     return 0
 
@@ -457,8 +457,8 @@ def _cmd_promote(args: argparse.Namespace) -> int:
     summary = promote_step(settings, cfg=PromotionConfig(max_champions=args.max_champions))
     print(
         f"promote: incubating={summary.n_incubating} promoted={summary.n_promoted} "
-        f"champions_checked={summary.n_champions_checked} retired={summary.n_retired} "
-        f"champions={summary.n_champions}"
+        f"rejected={summary.n_rejected} champions_checked={summary.n_champions_checked} "
+        f"retired={summary.n_retired} champions={summary.n_champions}"
     )
     return 0
 

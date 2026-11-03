@@ -10,6 +10,13 @@ multiple of backtest), they are retired and de-allocated.
 
 Forward returns are *recomputed deterministically from stored bars* (shadow), so no
 per-strategy executed sub-account is needed.
+
+Incubation is time-boxed and ends in a verdict. Once ``min_incubation_bars`` of forward
+data exist, the row is either promoted or demoted back to ``candidate`` — it never waits
+indefinitely. This FSM is the *only* thing allowed to move an incubating or champion row:
+the nightly search holds off on those families entirely (see
+``engine.search.research.held_incumbent``), because a re-discovery that overwrote the row
+would also reset the very clock this module measures forward bars against.
 """
 
 from __future__ import annotations
@@ -54,6 +61,7 @@ RECENT_ALLOC_BARS = 90
 class PromotionSummary:
     n_incubating: int = 0
     n_promoted: int = 0
+    n_rejected: int = 0
     n_champions_checked: int = 0
     n_retired: int = 0
     n_champions: int = 0
@@ -246,6 +254,16 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
                     rec["family"], status="champion", champion_start_ts=_last_ts(store, rec)
                 )
                 summary.n_promoted += 1
+            elif fwd is not None and len(fwd) >= cfg.min_incubation_bars:
+                # The window is full and the forward evidence did not hold up. Incubation
+                # is a test with a verdict, not an open-ended wait: demote the row so the
+                # family is searchable again. Research holds off while a row incubates
+                # (see engine.search.research.held_incumbent), so without this verdict a
+                # failed incumbent would freeze its family permanently.
+                population.update_fields(
+                    rec["family"], status="candidate", incubation_start_ts=None
+                )
+                summary.n_rejected += 1
 
         for rec in population.list("champion"):
             summary.n_champions_checked += 1

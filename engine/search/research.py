@@ -5,6 +5,10 @@ records the outcome in the population. A strategy that *passes* the gate enters
 ``incubating`` (it is NOT allocated yet) — it must first survive shadow incubation on
 forward data, handled by the promotion FSM (``engine.orchestration.promotion``). This split
 is deliberate: the search/generator never promotes straight to live capital.
+
+Families already held by an incumbent — incubating or champion — are skipped, not
+re-searched. A row under forward test carries state the search must not touch, above all
+the clock that test is measured from (see ``held_incumbent``).
 """
 
 from __future__ import annotations
@@ -49,12 +53,45 @@ GP_GATE = GateThresholds(
     dsr_min=0.99, pbo_max=0.10, spa_max=0.02, min_oos_sharpe=0.0, min_pct_positive=0.55
 )
 
+# A family in one of these states belongs to an *incumbent* and research leaves it alone.
+HELD_STATUSES = frozenset({"incubating", "champion"})
+
 
 @dataclass(slots=True)
 class ResearchSummary:
     n_evaluated: int = 0
     n_passed: int = 0
+    n_held: int = 0
     families: list[str] = field(default_factory=list)
+
+
+def held_incumbent(existing: dict | None) -> bool:
+    """True when this family's row belongs to an incumbent research must not overwrite.
+
+    An ``incubating`` row is a *test in progress*. Two things in it are state, not output:
+    ``incubation_start_ts`` is the clock the promotion FSM counts forward bars from, and
+    its stored metrics are the reference band that forward performance is judged against.
+    A ``champion`` row is a test that passed and now holds capital.
+
+    Without this guard the nightly run re-searched every family and upserted whatever it
+    found, which reset ``incubation_start_ts`` to the newest bar *every night*. The
+    forward window therefore never grew past a bar or two and
+    ``PromotionConfig.min_incubation_bars`` (60) was unreachable in principle: five months
+    of nightly runs produced repeated gate passes and never one champion. Snapshots of
+    ``state/population.db`` show the clock stepping forward a day at a time (2026-10-26,
+    then 10-28, then 10-31, then 11-02) while the forward window stayed at one bar.
+
+    Only the promotion FSM may move an incumbent: promote it, retire it on decay, or
+    reject it when its incubation window closes without the evidence holding up. Research
+    takes the family back over on the night after that verdict.
+
+    A research-only row is excluded, because the FSM deliberately never touches one (no
+    venue can fill it, see ``engine.orchestration.promotion``). Holding one would freeze
+    its family for good rather than for its incubation window.
+    """
+    if not existing or existing.get("status") not in HELD_STATUSES:
+        return False
+    return not (existing.get("metrics") or {}).get("research_only")
 
 
 def _metrics(report, ppy: float, fee_bps: float = 10.0, slippage_bps: float = 5.0) -> dict:
@@ -100,7 +137,25 @@ def _record_for(
     slippage_bps=5.0,
     research_only=False,
 ):
-    """Decide the population row for a discovery, preserving a still-valid champion."""
+    """Decide the population row for a discovery, preserving an incumbent's row and clocks."""
+    # An incumbent is never overwritten by a fresh discovery (see held_incumbent). Handing
+    # back its row verbatim keeps its incubation clock and its reference metrics intact.
+    # run_research skips the search for these families; this is the backstop for callers
+    # that reach _record_for another way (e.g. `research --strategies X` on one family).
+    if held_incumbent(existing):
+        return StrategyRecord(
+            family=family,
+            strategy=existing["strategy"],
+            symbol=existing["symbol"],
+            source=existing["source"],
+            timeframe=existing["timeframe"],
+            params=existing["params"],
+            status=existing["status"],
+            metrics=existing["metrics"],
+            incubation_start_ts=existing.get("incubation_start_ts"),
+            champion_start_ts=existing.get("champion_start_ts"),
+        )
+
     metrics = _metrics(report, ppy, fee_bps=fee_bps, slippage_bps=slippage_bps)
     metrics["research_only"] = bool(research_only)
     base = dict(
@@ -115,15 +170,10 @@ def _record_for(
     if not report.passed:
         return StrategyRecord(**base, status="candidate")
 
-    # A still-valid champion with unchanged params keeps its status and clocks.
-    if existing and existing["status"] == "champion" and existing["params"] == report.best_params:
-        return StrategyRecord(
-            **base,
-            status="champion",
-            incubation_start_ts=existing.get("incubation_start_ts"),
-            champion_start_ts=existing.get("champion_start_ts"),
-        )
-    # New / changed / previously-failed -> (re)start incubation on forward data.
+    # The family is free (candidate, retired, or new), so tonight's pass takes it and the
+    # forward clock starts at the last bar the gate saw. Incumbents never get here —
+    # held_incumbent returned their row above, which is also what keeps a champion's
+    # reference metrics the ones it was validated against rather than a nightly re-fit.
     return StrategyRecord(**base, status="incubating", incubation_start_ts=last_ts)
 
 
@@ -206,6 +256,13 @@ def run_research(
                 last_ts = int(bars["ts"].iloc[-1])
                 for strat_name in archetypes:
                     family = f"{strat_name}:{symbol}:{tf}"
+                    existing = population.get(family)
+                    if held_incumbent(existing):
+                        # Under forward test or holding capital: skipped before the search
+                        # so the night spends neither compute nor trial-ledger budget on a
+                        # family whose row it is not allowed to change.
+                        summary.n_held += 1
+                        continue
                     strategy_cls = get_strategy(strat_name)
                     run_bars, run_fee, run_slip = bars, entry_fee, entry_slip
                     run_only, inherited = entry.only, 0
@@ -250,7 +307,7 @@ def run_research(
                             tf=tf,
                             ppy=ppy,
                             last_ts=int(run_bars["ts"].iloc[-1]),
-                            existing=population.get(family),
+                            existing=existing,
                             fee_bps=run_fee,
                             slippage_bps=run_slip,
                             research_only=run_only,
@@ -268,38 +325,45 @@ def run_research(
 
                 if include_gp:
                     family = f"gp:{symbol}:{tf}"
-                    report = discover_gp(
-                        bars,
-                        ppy=ppy,
-                        cfg=gp_config,
-                        seed=seed,
-                        fee_bps=entry_fee,
-                        slippage_bps=entry_slip,
-                        thresholds=GP_GATE,  # stricter than the archetype gate
-                        ledger=ledger,
-                        family=family,
-                        hof_path=hof_path,
-                    )
-                    population.upsert(
-                        _record_for(
-                            report,
-                            family=family,
-                            strat_name="gp",
-                            symbol=symbol,
-                            source=source,
-                            tf=tf,
+                    existing = population.get(family)
+                    if held_incumbent(existing):
+                        # Deliberate side effect: the hall of fame for this symbol/timeframe
+                        # stops accumulating while the gp family is held, because evolving
+                        # it would also spend ledger budget on a row we may not write.
+                        summary.n_held += 1
+                    else:
+                        report = discover_gp(
+                            bars,
                             ppy=ppy,
-                            last_ts=last_ts,
-                            existing=population.get(family),
+                            cfg=gp_config,
+                            seed=seed,
                             fee_bps=entry_fee,
                             slippage_bps=entry_slip,
-                            research_only=entry.only,
+                            thresholds=GP_GATE,  # stricter than the archetype gate
+                            ledger=ledger,
+                            family=family,
+                            hof_path=hof_path,
                         )
-                    )
-                    summary.n_evaluated += 1
-                    summary.families.append(family)
-                    if report.passed:
-                        summary.n_passed += 1
+                        population.upsert(
+                            _record_for(
+                                report,
+                                family=family,
+                                strat_name="gp",
+                                symbol=symbol,
+                                source=source,
+                                tf=tf,
+                                ppy=ppy,
+                                last_ts=last_ts,
+                                existing=existing,
+                                fee_bps=entry_fee,
+                                slippage_bps=entry_slip,
+                                research_only=entry.only,
+                            )
+                        )
+                        summary.n_evaluated += 1
+                        summary.families.append(family)
+                        if report.passed:
+                            summary.n_passed += 1
 
                 if include_ensemble:
                     # The alpha pool: combine tonight's best archetype configs + the GP
@@ -308,6 +372,10 @@ def run_research(
                     # as its own family, with the members' trial counts inherited into
                     # its DSR deflation (see engine/search/ensemble.py).
                     family = f"ensemble:{symbol}:{tf}"
+                    existing = population.get(family)
+                    if held_incumbent(existing):
+                        summary.n_held += 1
+                        continue
                     report = discover_ensemble(
                         bars,
                         population=population,
@@ -333,7 +401,7 @@ def run_research(
                                 tf=tf,
                                 ppy=ppy,
                                 last_ts=last_ts,
-                                existing=population.get(family),
+                                existing=existing,
                             )
                         )
                         summary.n_evaluated += 1

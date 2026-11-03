@@ -34,6 +34,45 @@ def test_run_research_incubates_passing_strategies(paper_settings):
     pop.close()
 
 
+def test_a_second_night_holds_the_incumbent_instead_of_restarting_it(paper_settings):
+    """Two nightly runs back to back: night two must leave night one's row alone.
+
+    This is the end-to-end form of the defect in tests/test_incubation_clock.py. Research
+    used to upsert whatever it found over the incubating row, which reset
+    ``incubation_start_ts`` to the newest bar. Because the nightly run happens every night,
+    the forward window never reached ``min_incubation_bars`` and no strategy could ever be
+    promoted — the symptom was months of gate passes with ``champions.json`` empty.
+    """
+    kwargs = dict(
+        strategies=("tsmom",),
+        symbols=["BTC/JPY"],
+        timeframes=["1h"],
+        trials=6,
+        thresholds=LENIENT,
+        min_bars=150,
+    )
+    first = run_research(paper_settings, **kwargs)
+    assert (first.n_passed, first.n_held) == (1, 0)
+
+    pop = Population(paper_settings.state_dir / "population.db")
+    before = pop.get("tsmom:BTC/JPY:1h")
+    pop.close()
+    assert before["status"] == "incubating"
+
+    # A second run with a different seed: a real search draws different params each night.
+    second = run_research(paper_settings, seed=7, **kwargs)
+    assert second.n_held == 1, "the incubating family must be skipped, not re-searched"
+    assert second.n_evaluated == 0, "and skipped before the search, so it costs nothing"
+
+    pop = Population(paper_settings.state_dir / "population.db")
+    after = pop.get("tsmom:BTC/JPY:1h")
+    pop.close()
+    assert after["incubation_start_ts"] == before["incubation_start_ts"]
+    assert after["params"] == before["params"]
+    assert after["metrics"] == before["metrics"]
+    assert after["status"] == "incubating"
+
+
 def test_run_research_records_failures_as_candidates(paper_settings):
     # Impossible thresholds -> nothing passes -> recorded as candidate, never incubating.
     strict = GateThresholds(dsr_min=2.0)  # DSR is a probability in [0,1]; never reachable
