@@ -23,12 +23,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import ceil
 
 import numpy as np
 
 import engine.gp.strategy  # noqa: F401  -- registers the "gp" strategy for get_strategy
 from engine.backtest import run_backtest
 from engine.backtest.metrics import max_drawdown
+from engine.core.clock import timeframe_seconds
 from engine.core.config import Settings
 from engine.data.store import OHLCVStore
 from engine.monitor.decay import page_hinkley, sharpe_lower_band
@@ -43,6 +45,7 @@ from engine.validation.stats import return_moments
 @dataclass(frozen=True, slots=True)
 class PromotionConfig:
     min_incubation_bars: int = 60  # forward bars required before promotion
+    min_incubation_days: float = 60.0  # ...and this much wall-clock, whichever is longer
     min_decay_bars: int = 30  # forward bars required before judging decay
     band_z: float = 1.645  # one-sided 95% lower band on backtest Sharpe
     max_dd_multiple: float = 1.5  # forward DD beyond this x backtest DD => decay
@@ -55,6 +58,25 @@ class PromotionConfig:
 
 # How many recent bars of forward returns to estimate allocation stats / correlations from.
 RECENT_ALLOC_BARS = 90
+
+
+def required_forward_bars(timeframe: str, cfg: PromotionConfig) -> int:
+    """Forward bars needed before a verdict, as a *duration* rather than a bar count.
+
+    ``min_incubation_bars`` alone is a trap on fine timeframes. Sixty bars of 5m data is
+    five hours. The standard error of a Sharpe estimated from 144 observations is about
+    1/sqrt(144) = 0.083 per bar, so a measured 0.055 per bar is indistinguishable from
+    zero — and then annualising it by sqrt(105120) prints "+15.1", which reads like a
+    spectacular result and is in fact noise. Five hours cannot settle anything, and the
+    first batch of shadow verdicts produced exactly that number before this existed.
+
+    So the requirement is whichever is longer: ``min_incubation_bars`` bars, or
+    ``min_incubation_days`` of wall clock. On daily bars the two coincide at 60, which is
+    what the bar count always meant; on 1h it becomes 1,440 bars and on 5m 17,280.
+    """
+    step_s = timeframe_seconds(timeframe)
+    by_time = ceil(cfg.min_incubation_days * 86_400.0 / step_s) if step_s > 0 else 0
+    return max(int(cfg.min_incubation_bars), int(by_time))
 
 
 @dataclass(slots=True)
@@ -101,9 +123,17 @@ def forward_returns(store: OHLCVStore, record: dict, cfg: PromotionConfig, start
     return result.returns[mask]
 
 
-def incubation_passed(forward, ref: dict, cfg: PromotionConfig) -> bool:
-    """Forward Sharpe must be positive and within the backtest's lower confidence band."""
-    if forward is None or len(forward) < cfg.min_incubation_bars:
+def incubation_passed(
+    forward, ref: dict, cfg: PromotionConfig, timeframe: str | None = None
+) -> bool:
+    """Forward Sharpe must be positive and within the backtest's lower confidence band.
+
+    ``timeframe`` sets how much forward data counts as enough (see
+    :func:`required_forward_bars`). It is optional only so existing callers keep working;
+    pass it, or a 5m strategy is judged on five hours.
+    """
+    needed = cfg.min_incubation_bars if timeframe is None else required_forward_bars(timeframe, cfg)
+    if forward is None or len(forward) < needed:
         return False
     fwd = return_moments(forward)
     lower = sharpe_lower_band(
@@ -249,12 +279,12 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
                 # try to trade "DEXJPUS". It informs research; it never trades.
                 continue
             fwd = forward_returns(store, rec, cfg, rec.get("incubation_start_ts"))
-            if incubation_passed(fwd, rec["metrics"], cfg):
+            if incubation_passed(fwd, rec["metrics"], cfg, rec["timeframe"]):
                 population.update_fields(
                     rec["family"], status="champion", champion_start_ts=_last_ts(store, rec)
                 )
                 summary.n_promoted += 1
-            elif fwd is not None and len(fwd) >= cfg.min_incubation_bars:
+            elif fwd is not None and len(fwd) >= required_forward_bars(rec["timeframe"], cfg):
                 # The window is full and the forward evidence did not hold up. Incubation
                 # is a test with a verdict, not an open-ended wait: demote the row so the
                 # family is searchable again. Research holds off while a row incubates

@@ -16,9 +16,21 @@ apart.
 
 This module answers it for free. Nothing here places an order or allocates capital: it
 recomputes returns from bars already in the store, exactly as ``promotion.forward_returns``
-does, and judges them with exactly the same test a promoted strategy faces
-(``promotion.incubation_passed``). Using a different measuring stick for the two groups
-would make the comparison worthless, so the test is imported rather than reimplemented.
+does, over a window as long as the one a promoted strategy must survive
+(``promotion.required_forward_bars``).
+
+The headline is ``worth_trading``, not ``would_have_passed``, and the difference matters.
+``incubation_passed`` asks whether forward performance lived up to the *backtest*, which
+is the right question for a strategy the gate approved and a near-vacuous one for a
+reject: a reject's backtest is unimpressive by definition, so its lower confidence band
+sits at or below zero and the test collapses into "did the forward window happen to be
+up". Both are recorded, the relative one honestly labelled, but the gate is measured
+against the absolute bar in ``WORTH_TRADING_SHARPE``.
+
+A window in which the strategy never took a position is recorded and then excluded from
+the rate. It is not a rejected edge that turned out to work; it is a configuration that
+stood aside, and leaving it in the denominator would quietly deflate the very number this
+module exists to produce.
 
 **Tracks are immutable.** A rejected family is re-searched every night and its population
 row is overwritten with whatever the search lands on, so the row itself is a moving target
@@ -64,6 +76,7 @@ from engine.orchestration.promotion import (
     PromotionConfig,
     forward_returns,
     incubation_passed,
+    required_forward_bars,
 )
 from engine.strategies import get_strategy
 from engine.validation.stats import return_moments
@@ -71,6 +84,18 @@ from engine.validation.stats import return_moments
 # Verdicts are append-only, so without a cap the file grows forever inside a git-tracked
 # state directory. Twenty per family keeps a few years of history at a few hundred KB.
 MAX_VERDICTS_PER_FAMILY = 20
+
+# The absolute bar for "the gate should have let this through": an annualised forward
+# Sharpe this good, on a window long enough to mean something, having actually traded.
+#
+# An absolute threshold is necessary because the promotion test is *relative* to the
+# strategy's own backtest, and a reject's backtest is by definition unimpressive. For
+# gp:USD/JPY:5m the lower confidence band on a backtest Sharpe of 0.35 came out at
+# **-0.002 per bar** — below zero, so "cleared the promotion test" degenerated to "the
+# forward window happened to be up", which is a coin flip and not a false negative.
+# Measuring the gate against that would have reported a false-negative rate of 17% on the
+# first night from two coin flips.
+WORTH_TRADING_SHARPE = 1.0
 
 TRACKS_FILE = "tracks.jsonl"
 VERDICTS_FILE = "verdicts.jsonl"
@@ -115,7 +140,8 @@ class ShadowSummary:
     n_opened: int = 0
     n_tracking: int = 0
     n_closed: int = 0
-    n_would_have_passed: int = 0
+    n_worth_trading: int = 0
+    n_never_traded: int = 0
     n_skipped_intrabar: int = 0
     n_errors: int = 0
     errors: list[str] = field(default_factory=list)
@@ -193,10 +219,16 @@ class ShadowLedger:
         """Every recorded verdict, newest first."""
         return list(reversed(_read_jsonl(self.root / VERDICTS_FILE)))
 
-    def tally(self) -> tuple[int, int]:
-        """``(n_verdicts, n_would_have_passed)`` over everything recorded."""
+    def tally(self) -> tuple[int, int, int]:
+        """``(n_verdicts, n_worth_trading, n_never_traded)`` over everything recorded.
+
+        The false-negative rate is ``n_worth_trading`` over the verdicts that actually
+        traded, i.e. ``n_verdicts - n_never_traded``. A configuration that stood aside for
+        its whole window says nothing about the gate and must not sit in the denominator.
+        """
         rows = _read_jsonl(self.root / VERDICTS_FILE)
-        return len(rows), sum(1 for r in rows if r.get("would_have_passed"))
+        never = sum(1 for r in rows if r.get("n_active_bars") == 0)
+        return len(rows), sum(1 for r in rows if r.get("worth_trading")), never
 
 
 def _requires_intrabar(strategy: str) -> bool:
@@ -237,15 +269,21 @@ def shadow_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> Sh
                 summary.errors.append(f"{track['family']}: {type(exc).__name__}: {exc}")
                 ledger.close_track(track["family"])
                 continue
-            if fwd is None or len(fwd) < cfg.min_incubation_bars:
+            if fwd is None or len(fwd) < required_forward_bars(track["timeframe"], cfg):
                 summary.n_tracking += 1
                 continue
 
             gate = track["gate_metrics"]
             moments = return_moments(fwd)
-            passed = incubation_passed(fwd, gate, cfg)
+            passed = incubation_passed(fwd, gate, cfg, track["timeframe"])
             ppy = float(gate.get("ppy", 365.0))
             equity = pd.Series(np.cumprod(1.0 + np.asarray(fwd, dtype=float)))
+            # A window in which the strategy never took a position carries no information
+            # about the gate: it is not a rejected edge that turned out to work, it is a
+            # configuration that stood aside. Nine of the first twelve verdicts were this.
+            n_active = int(np.count_nonzero(np.asarray(fwd, dtype=float)))
+            sharpe_annual = float(moments.sharpe * np.sqrt(ppy))
+            worth_trading = bool(n_active > 0 and sharpe_annual >= WORTH_TRADING_SHARPE)
             ledger.append_verdict(
                 family=track["family"],
                 strategy=track["strategy"],
@@ -256,10 +294,14 @@ def shadow_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> Sh
                 params_hash=track["params_hash"],
                 start_ts=track["start_ts"],
                 n_bars=len(fwd),
+                n_active_bars=n_active,
                 fwd_sharpe_per_bar=float(moments.sharpe),
-                fwd_sharpe_annual=float(moments.sharpe * np.sqrt(ppy)),
+                fwd_sharpe_annual=sharpe_annual,
                 fwd_cum_return=float(equity.iloc[-1] - 1.0),
                 fwd_max_drawdown=float(max_drawdown(equity)),
+                worth_trading=worth_trading,
+                # Kept alongside, honestly labelled: "did it live up to its own backtest",
+                # which for a weak backtest is a low bar. worth_trading is the headline.
                 would_have_passed=bool(passed),
                 required_lower_band=_lower_band(gate, cfg),
                 gate_dsr=_float_or_none(gate.get("dsr")),
@@ -269,7 +311,8 @@ def shadow_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> Sh
             )
             ledger.close_track(track["family"])
             summary.n_closed += 1
-            summary.n_would_have_passed += int(passed)
+            summary.n_worth_trading += int(worth_trading)
+            summary.n_never_traded += int(n_active == 0)
 
         # 2. Open a track for every reject that has none, stamping tonight's params.
         for record in population.list("candidate"):
@@ -317,6 +360,7 @@ def _float_or_none(value) -> float | None:
 
 __all__ = [
     "MAX_VERDICTS_PER_FAMILY",
+    "WORTH_TRADING_SHARPE",
     "ShadowLedger",
     "ShadowSummary",
     "params_hash",

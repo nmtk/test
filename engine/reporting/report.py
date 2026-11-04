@@ -192,10 +192,14 @@ def _pipeline_section(state_dir: Path) -> list[str]:
 def _shadow_section(state_dir: Path, limit: int = 12) -> list[str]:
     """What became of the candidates the gate rejected — the gate's false-negative rate.
 
-    The headline is the fraction of rejects that went on to clear the *same* forward test a
-    promoted strategy must clear. Near zero means the gate is rejecting noise, which is its
-    job. Persistently high means the thresholds are discarding real strategies, and the
-    shortage of champions is a tuning problem rather than a shortage of edge.
+    The headline is the fraction of rejects whose forward performance was good enough in
+    absolute terms to be worth trading. Near zero means the gate is rejecting noise, which
+    is its job. Persistently high means the thresholds are discarding real strategies, and
+    the shortage of champions is a tuning problem rather than a shortage of edge.
+
+    Verdicts where the strategy never took a position are shown but kept out of the rate:
+    standing aside for a whole window is not a rejected edge, and leaving those in the
+    denominator would deflate the number this section exists to report.
     """
     root = state_dir / "shadow"
     if not root.is_dir():
@@ -203,37 +207,40 @@ def _shadow_section(state_dir: Path, limit: int = 12) -> list[str]:
     try:
         ledger = ShadowLedger(root)
         n_open = len(ledger.tracks)
-        n_verdicts, n_passed = ledger.tally()
+        n_verdicts, n_worth, n_never = ledger.tally()
         rows = sorted(
             ledger.verdicts(),
-            key=lambda r: (bool(r.get("would_have_passed")), r.get("fwd_sharpe_annual") or 0.0),
+            key=lambda r: (bool(r.get("worth_trading")), r.get("fwd_sharpe_annual") or 0.0),
             reverse=True,
         )[:limit]
     except Exception:
         return ["_shadow ledger unreadable_"]
 
-    rate = f"{100.0 * n_passed / n_verdicts:.1f}%" if n_verdicts else "n/a"
+    judged = n_verdicts - n_never
+    rate = f"{100.0 * n_worth / judged:.1f}%" if judged else "n/a"
     out = [
-        f"_tracking: {n_open} | verdicts: {n_verdicts} | "
-        f"would have cleared the promotion test: {n_passed} ({rate})_",
+        f"_tracking: {n_open} | verdicts: {n_verdicts} (never traded: {n_never}) | "
+        f"worth trading: {n_worth} of {judged} ({rate})_",
         "",
     ]
     if not n_verdicts:
-        out.append("_まだ判定なし（各枠は前方60本たまってから判定）_")
+        out.append("_まだ判定なし（各枠は前方60日ぶんたまってから判定）_")
         return out
 
     out += [
-        "| family | fwd_sharpe | fwd_return | bars | gate dsr/pbo | passed? |",
-        "|---|---|---|---|---|---|",
+        "| family | fwd_sharpe | fwd_return | bars | active | gate dsr/pbo | worth trading? |",
+        "|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         dsr = "?" if r.get("gate_dsr") is None else f"{r['gate_dsr']:.3f}"
         pbo = "?" if r.get("gate_pbo") is None else f"{r['gate_pbo']:.3f}"
         sharpe = "?" if r.get("fwd_sharpe_annual") is None else f"{r['fwd_sharpe_annual']:+.2f}"
         ret = "?" if r.get("fwd_cum_return") is None else f"{100.0 * r['fwd_cum_return']:+.1f}%"
+        active = r.get("n_active_bars")
+        verdict = "YES" if r.get("worth_trading") else ("never traded" if active == 0 else "no")
         out.append(
             f"| {r['family']} | {sharpe} | {ret} | {r['n_bars']} | "
-            f"{dsr}/{pbo} | {'YES' if r.get('would_have_passed') else 'no'} |"
+            f"{'?' if active is None else active} | {dsr}/{pbo} | {verdict} |"
         )
     return out
 

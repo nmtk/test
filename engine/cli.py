@@ -469,7 +469,8 @@ def _cmd_shadow(_args: argparse.Namespace) -> int:
     summary = shadow_step(settings)
     print(
         f"shadow: opened={summary.n_opened} tracking={summary.n_tracking} "
-        f"closed={summary.n_closed} would_have_passed={summary.n_would_have_passed} "
+        f"closed={summary.n_closed} worth_trading={summary.n_worth_trading} "
+        f"never_traded={summary.n_never_traded} "
         f"skipped_intrabar={summary.n_skipped_intrabar} errors={summary.n_errors}"
     )
     for line in summary.errors[:10]:

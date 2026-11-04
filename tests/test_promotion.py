@@ -12,7 +12,13 @@ from engine.orchestration.promotion import (
     promote_step,
 )
 
-CFG = PromotionConfig(min_incubation_bars=60, min_decay_bars=30, max_champions=4)
+# These tests run on 1h bars, where the production default of 60 forward *days* would mean
+# 1,440 bars. min_incubation_days is pinned to the 2.5 days that 60 hourly bars actually
+# span, so the bar count stays the binding constraint and these tests keep testing what
+# they are about. The duration rule itself is covered in test_forward_window_duration.
+CFG = PromotionConfig(
+    min_incubation_bars=60, min_incubation_days=2.5, min_decay_bars=30, max_champions=4
+)
 
 
 # -- unit: incubation -------------------------------------------------------------------
