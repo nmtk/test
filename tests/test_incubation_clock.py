@@ -179,17 +179,26 @@ def _settings_at(tmp_path):
     return dataclasses.replace(base, state_dir=tmp_path / "state", data_dir=tmp_path / "data")
 
 
-def _write_bars(tmp_path, n: int, *, trend: float = 0.0, whipsaw: bool = False) -> int:
+def _write_bars(
+    tmp_path, n: int, *, trend: float = 0.0, noise: float = 0.0, whipsaw: bool = False
+) -> int:
     """A deterministic series: a compounding trend momentum rides, or one it loses on.
 
     ``whipsaw`` steps between two levels every three bars, which a 5-bar momentum signal
     reads out of phase: the forward Sharpe is about -0.7, so incubation genuinely fails.
+
+    ``noise`` is needed wherever a test asserts something about a confidence *band*. A
+    perfectly smooth series has zero return variance, so ``mean / std`` blows up to a
+    Sharpe of ~1e16 and clears any band for a reason that has nothing to do with edge.
     """
     index = np.arange(n)
     if whipsaw:
         close = 1_000_000.0 * (1.0 + 0.02 * ((index // 3) % 2))
     else:
-        close = 1_000_000.0 * np.cumprod(np.full(n, 1.0 + trend))
+        steps = np.full(n, 1.0 + trend)
+        if noise:
+            steps = steps + np.random.default_rng(0).normal(0.0, noise, n)
+        close = 1_000_000.0 * np.cumprod(steps)
     frame = pd.DataFrame(
         {
             "ts": index.astype("int64") * DAY_MS + 1_700_000_000_000,
@@ -272,7 +281,7 @@ def test_a_full_window_that_fails_is_demoted_so_the_family_reopens(tmp_path):
 def test_a_full_window_that_holds_up_is_promoted(tmp_path):
     """The other half of the verdict: the path that was unreachable before the clock fix."""
     settings = _settings_at(tmp_path)
-    first_ts = _write_bars(tmp_path, 400, trend=0.01)
+    first_ts = _write_bars(tmp_path, 400, trend=0.01, noise=0.01)
     _seed_incubating(settings, first_ts + 300 * DAY_MS, sharpe_per_bar=0.05)
     summary = promote_step(settings, cfg=PromotionConfig(min_incubation_bars=60))
     assert summary.n_promoted == 1 and summary.n_rejected == 0

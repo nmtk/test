@@ -37,6 +37,7 @@ from engine.orchestration.champions import Allocation, Champions, save_champions
 from engine.orchestration.live import run_live_step
 from engine.orchestration.orchestrator import run_step
 from engine.orchestration.promotion import PromotionConfig, promote_step
+from engine.orchestration.shadow import shadow_step
 from engine.reporting import generate_report
 from engine.search.research import run_research
 from engine.strategies import all_strategies, all_xs_strategies, get_strategy
@@ -463,6 +464,19 @@ def _cmd_promote(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_shadow(_args: argparse.Namespace) -> int:
+    settings = load_settings()
+    summary = shadow_step(settings)
+    print(
+        f"shadow: opened={summary.n_opened} tracking={summary.n_tracking} "
+        f"closed={summary.n_closed} would_have_passed={summary.n_would_have_passed} "
+        f"skipped_intrabar={summary.n_skipped_intrabar} errors={summary.n_errors}"
+    )
+    for line in summary.errors[:10]:
+        print(f"  ! {line}")
+    return 0
+
+
 def _cmd_status(_args: argparse.Namespace) -> int:
     import json
     import sqlite3
@@ -632,6 +646,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_promote.add_argument("--max-champions", type=int, default=8)
     p_promote.set_defaults(func=_cmd_promote)
+
+    sub.add_parser(
+        "shadow",
+        help="forward-test the candidates the gate REJECTED (no orders, no capital)",
+    ).set_defaults(func=_cmd_shadow)
 
     p_val = sub.add_parser("validate", help="run the validation gate on a strategy family")
     p_val.add_argument("--strategy", required=True, help="strategy name (see list-strategies)")

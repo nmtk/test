@@ -31,6 +31,10 @@ jobs:
         run: uv run trade research --gp
       - name: Promote (incubation/decay FSM)
         run: uv run trade promote
+      - name: Shadow (forward-test the candidates the gate rejected)
+        # No orders and no capital: it recomputes returns from stored bars, so it measures
+        # the gate's false-negative rate for free. ~10s over ~150 tracked candidates.
+        run: uv run trade shadow
       - name: Commit population + reports
         run: |
           git config user.name "trade-bot"

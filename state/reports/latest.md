@@ -1,6 +1,6 @@
 # trade — paper report
 
-_generated 2026-11-04T01:13:06.950512+00:00 | cumulative trials: 796,885_
+_generated 2026-11-04T07:35:14.649621+00:00 | cumulative trials: 796,885_
 
 ## Champions (0)
 _none — waiting for a strategy to clear research → incubation → promotion_
@@ -25,6 +25,11 @@ _incubating: 3 | rejected: 154 | retired: 0_
 | ensemble:ETH/JPY:1d | 2026-11-02 | 2.89 | 1.000 | 0.179 |
 | ensemble:XRP/JPY:1d | 2026-11-02 | 2.83 | 1.000 | 0.020 |
 | gp:ETH/JPY:1d | 2026-11-02 | 2.60 | 1.000 | 0.075 |
+
+## Shadow (rejected candidates, tracked forward)
+_tracking: 153 | verdicts: 0 | would have cleared the promotion test: 0 (n/a)_
+
+_まだ判定なし（各枠は前方60本たまってから判定）_
 
 ## Strategy Performance
 ### tsmom — 時系列モメンタム

@@ -19,6 +19,7 @@ import pandas as pd
 from engine.core.config import Settings
 from engine.orchestration import state as state_io
 from engine.orchestration.champions import load_champions
+from engine.orchestration.shadow import ShadowLedger
 
 # Plain-language descriptions of each strategy archetype (Japanese).
 _DESCRIPTIONS: dict[str, tuple[str, str]] = {
@@ -188,6 +189,55 @@ def _pipeline_section(state_dir: Path) -> list[str]:
     return out
 
 
+def _shadow_section(state_dir: Path, limit: int = 12) -> list[str]:
+    """What became of the candidates the gate rejected — the gate's false-negative rate.
+
+    The headline is the fraction of rejects that went on to clear the *same* forward test a
+    promoted strategy must clear. Near zero means the gate is rejecting noise, which is its
+    job. Persistently high means the thresholds are discarding real strategies, and the
+    shortage of champions is a tuning problem rather than a shortage of edge.
+    """
+    root = state_dir / "shadow"
+    if not root.is_dir():
+        return ["_no shadow ledger yet — run `trade shadow`_"]
+    try:
+        ledger = ShadowLedger(root)
+        n_open = len(ledger.tracks)
+        n_verdicts, n_passed = ledger.tally()
+        rows = sorted(
+            ledger.verdicts(),
+            key=lambda r: (bool(r.get("would_have_passed")), r.get("fwd_sharpe_annual") or 0.0),
+            reverse=True,
+        )[:limit]
+    except Exception:
+        return ["_shadow ledger unreadable_"]
+
+    rate = f"{100.0 * n_passed / n_verdicts:.1f}%" if n_verdicts else "n/a"
+    out = [
+        f"_tracking: {n_open} | verdicts: {n_verdicts} | "
+        f"would have cleared the promotion test: {n_passed} ({rate})_",
+        "",
+    ]
+    if not n_verdicts:
+        out.append("_まだ判定なし（各枠は前方60本たまってから判定）_")
+        return out
+
+    out += [
+        "| family | fwd_sharpe | fwd_return | bars | gate dsr/pbo | passed? |",
+        "|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        dsr = "?" if r.get("gate_dsr") is None else f"{r['gate_dsr']:.3f}"
+        pbo = "?" if r.get("gate_pbo") is None else f"{r['gate_pbo']:.3f}"
+        sharpe = "?" if r.get("fwd_sharpe_annual") is None else f"{r['fwd_sharpe_annual']:+.2f}"
+        ret = "?" if r.get("fwd_cum_return") is None else f"{100.0 * r['fwd_cum_return']:+.1f}%"
+        out.append(
+            f"| {r['family']} | {sharpe} | {ret} | {r['n_bars']} | "
+            f"{dsr}/{pbo} | {'YES' if r.get('would_have_passed') else 'no'} |"
+        )
+    return out
+
+
 def _performance_section(state_dir: Path) -> list[str]:
     """Per-archetype results table + plain-language strategy description."""
     db_path = state_dir / "population.db"
@@ -310,6 +360,11 @@ def generate_report(settings: Settings, mode: str = "paper") -> Path:
     out += ["", "## Equity", *_equity_section(state_io.equity_path(settings.state_dir, mode))]
     out += ["", "## Recent fills", *_fills_section(state_io.fills_path(settings.state_dir, mode))]
     out += ["", "## Pipeline", *_pipeline_section(settings.state_dir)]
+    out += [
+        "",
+        "## Shadow (rejected candidates, tracked forward)",
+        *_shadow_section(settings.state_dir),
+    ]
     out += ["", "## Strategy Performance", *_performance_section(settings.state_dir)]
     out.append("")
 
