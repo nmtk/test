@@ -52,6 +52,26 @@ def load_champions(path: Path) -> Champions:
 
 
 def save_champions(path: Path, champions: Champions) -> None:
+    """Write the allocations, but leave the file untouched when they have not changed.
+
+    ``updated`` therefore means "when the allocations last changed", not "when promote
+    last ran". That distinction is the whole point: three workflows run ``trade promote``
+    (executor-paper hourly, executor-live, research-nightly) and all three commit
+    ``state/``. When this rewrote the file unconditionally, each run produced a new
+    ``updated`` timestamp on the same line, so an hourly paper step landing inside the
+    nightly research window gave a *guaranteed* rebase conflict on champions.json — and
+    the nightly's push guard then discarded the whole twenty-minute research run rather
+    than guess at a resolution. That happened on 2026-10-31 and again on 2026-11-06,
+    silently, while the allocations on both sides were identical (both empty).
+
+    A no-op write also keeps the hourly churn out of git history, since the file is
+    committed on every executor run.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.exists() and load_champions(path).allocations == champions.allocations:
+            return
+    except (OSError, ValueError, KeyError, TypeError):
+        pass  # unreadable or malformed on disk -> rewrite it
     path.write_text(json.dumps(champions.to_dict(), indent=2, sort_keys=True) + "\n")

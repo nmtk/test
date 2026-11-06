@@ -14,7 +14,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: executor-paper
+  # Shared with research-nightly and executor-live — see research-nightly.yml.
+  group: state-writers
   cancel-in-progress: false
 
 jobs:

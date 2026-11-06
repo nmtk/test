@@ -13,7 +13,14 @@ permissions:
   contents: write
 
 concurrency:
-  group: research-nightly
+  # Shared with executor-paper and executor-live: all three run `trade promote` and commit
+  # state/, so if two overlap the second one's push is rejected and the rebase hits
+  # state/population.db — a binary file no resolution can merge. Queueing makes that
+  # impossible. The cost is at most one skipped hourly paper step (a queued run is
+  # cancelled when the next one of the same workflow arrives), and the executor derives
+  # its current bar from the data's own timestamps rather than the wall clock, so 20
+  # minutes of waiting changes nothing it does. See engine/core/clock.py.
+  group: state-writers
   cancel-in-progress: false
 
 jobs:
