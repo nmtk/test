@@ -458,7 +458,8 @@ def _cmd_promote(args: argparse.Namespace) -> int:
     summary = promote_step(settings, cfg=PromotionConfig(max_champions=args.max_champions))
     print(
         f"promote: incubating={summary.n_incubating} promoted={summary.n_promoted} "
-        f"rejected={summary.n_rejected} champions_checked={summary.n_champions_checked} "
+        f"rejected={summary.n_rejected} untradeable={summary.n_untradeable} "
+        f"champions_checked={summary.n_champions_checked} "
         f"retired={summary.n_retired} champions={summary.n_champions}"
     )
     return 0

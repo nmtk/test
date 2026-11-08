@@ -59,7 +59,7 @@ def _report(passed: bool = True, params: dict | None = None):
     )
 
 
-def _kwargs(existing, last_ts):
+def _kwargs(existing, last_ts, research_only=False):
     return dict(
         family="tsmom:BTC/JPY:1d",
         strat_name="tsmom",
@@ -69,6 +69,7 @@ def _kwargs(existing, last_ts):
         ppy=365.0,
         last_ts=last_ts,
         existing=existing,
+        research_only=research_only,
     )
 
 

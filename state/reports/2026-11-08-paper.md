@@ -1,6 +1,6 @@
 # trade — paper report
 
-_generated 2026-11-08T23:37:47.674522+00:00 | cumulative trials: 836,587_
+_generated 2026-11-08T23:48:22.707144+00:00 | cumulative trials: 836,587_
 
 ## Champions (0)
 _none — waiting for a strategy to clear research → incubation → promotion_
@@ -18,14 +18,13 @@ _flat_
 _no fills yet_
 
 ## Pipeline
-_incubating: 12 | rejected: 145 | retired: 0_
+_incubating: 11 | rejected: 146 | retired: 0_
 
 | family | since | bt_sharpe | dsr | pbo |
 |---|---|---|---|---|
 | ensemble:BTC/JPY:1d | 2026-11-03 | 2.96 | 1.000 | 0.175 |
 | ensemble:BTC/JPY:1h | 2026-11-05 | 2.75 | 1.000 | 0.194 |
 | ensemble:BTC/JPY:4h | 2026-11-07 | 3.30 | 1.000 | 0.147 |
-| ensemble:DEXJPUS:1d | 2026-10-30 | 0.75 | 1.000 | 0.115 |
 | ensemble:ETH/JPY:1d | 2026-11-02 | 2.89 | 1.000 | 0.179 |
 | ensemble:ETH/JPY:4h | 2026-11-04 | 2.45 | 0.999 | 0.155 |
 | ensemble:USD/JPY:1d | 2026-11-02 | 2.78 | 0.998 | 0.198 |
@@ -186,7 +185,7 @@ _合格基準: DSR ≥ 0.95 / PBO ≤ 0.20 / SPA p ≤ 0.05 / CPCV 中央値 ≥
 | ETH/JPY | 1h | +2.74 | -7.54% | 1.000 | 0.317 | 0.000 | +3.090 | **rejected** |
 | XRP/JPY | 4h | +2.81 | -7.61% | 1.000 | 0.103 | 0.006 | +3.307 | **incubating** |
 | BTC/JPY | 1h | +2.75 | -5.31% | 1.000 | 0.194 | 0.000 | +3.049 | **incubating** |
-| DEXJPUS | 1d | +0.75 | -19.60% | 1.000 | 0.115 | 0.000 | +0.761 | **incubating** |
+| DEXJPUS | 1d | +0.75 | -19.60% | 1.000 | 0.115 | 0.000 | +0.761 | **rejected** |
 | XRP/JPY | 1h | +2.38 | -14.38% | 1.000 | 0.516 | 0.004 | +3.164 | **rejected** |
 | ETH/JPY | 4h | +2.45 | -12.68% | 0.999 | 0.155 | 0.002 | +2.409 | **incubating** |
 | USD/JPY | 1d | +2.78 | -1.43% | 0.998 | 0.198 | 0.000 | +2.953 | **incubating** |

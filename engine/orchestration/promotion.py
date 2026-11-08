@@ -31,7 +31,7 @@ import engine.gp.strategy  # noqa: F401  -- registers the "gp" strategy for get_
 from engine.backtest import run_backtest
 from engine.backtest.metrics import max_drawdown
 from engine.core.clock import timeframe_seconds
-from engine.core.config import Settings
+from engine.core.config import Settings, load_universe
 from engine.data.store import OHLCVStore
 from engine.monitor.decay import page_hinkley, sharpe_lower_band
 from engine.orchestration.champions import Allocation, Champions, save_champions
@@ -84,6 +84,7 @@ class PromotionSummary:
     n_incubating: int = 0
     n_promoted: int = 0
     n_rejected: int = 0
+    n_untradeable: int = 0
     n_champions_checked: int = 0
     n_retired: int = 0
     n_champions: int = 0
@@ -270,13 +271,25 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
     population = Population(settings.state_dir / "population.db")
     summary = PromotionSummary()
     try:
+        tradeable = {e.instrument.symbol for e in load_universe(settings.universe_path).entries}
         for rec in population.list("incubating"):
             summary.n_incubating += 1
             if (rec.get("metrics") or {}).get("research_only"):
                 # Validated on a series that is not a tradeable venue (see
                 # ResearchSeries). Promoting it would hand the executor a symbol no
-                # broker can fill — _resolve_instrument would fall back to bitbank and
+                # broker can fill — _resolve_instrument would fabricate an instrument and
                 # try to trade "DEXJPUS". It informs research; it never trades.
+                continue
+            if rec["symbol"] not in tradeable:
+                # The same refusal, decided from the universe instead of the metadata.
+                # research_only is a flag the search writes, and a flag can be wrong: the
+                # ensemble branch of run_research omitted it entirely, so
+                # ensemble:DEXJPUS:1d sat in `incubating` with research_only=False,
+                # eligible for promotion to a symbol no venue carries. That is fixed at
+                # the source, but a promotion hands an order path real capital, so it does
+                # not rest on one flag being right. The universe is the ground truth for
+                # what can be filled.
+                summary.n_untradeable += 1
                 continue
             fwd = forward_returns(store, rec, cfg, rec.get("incubation_start_ts"))
             if incubation_passed(fwd, rec["metrics"], cfg, rec["timeframe"]):

@@ -133,9 +133,9 @@ def _record_for(
     ppy,
     last_ts,
     existing,
+    research_only,
     fee_bps=10.0,
     slippage_bps=5.0,
-    research_only=False,
 ):
     """Decide the population row for a discovery, preserving an incumbent's row and clocks."""
     # An incumbent is never overwritten by a fresh discovery (see held_incumbent). Handing
@@ -402,6 +402,12 @@ def run_research(
                                 ppy=ppy,
                                 last_ts=last_ts,
                                 existing=existing,
+                                # Must be passed, not defaulted: a pool built on a
+                                # research-only series is research-only too. Omitting it
+                                # here is what let ensemble:DEXJPUS:1d into `incubating`
+                                # with research_only=False, i.e. promotable to an
+                                # instrument no broker can fill.
+                                research_only=entry.only,
                             )
                         )
                         summary.n_evaluated += 1
