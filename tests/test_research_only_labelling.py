@@ -158,3 +158,92 @@ def test_a_tradeable_series_is_not_labelled_research_only(paper_settings):
         population.close()
     assert rows
     assert all(r["metrics"].get("research_only") is False for r in rows)
+
+
+# -- status, not just the flag --------------------------------------------------------
+
+
+def test_a_research_only_pass_stays_a_candidate():
+    """`incubating` is defined by a forward test this row will never be given.
+
+    promote_step skips research-only records before computing forward returns, so nothing
+    would ever move such a row out of `incubating` again. It would sit there permanently
+    labelled "awaiting a verdict" while awaiting nothing, and it would inflate the
+    incubating count — the number read as "strategies on their way to trading" — with a
+    row that can never trade. ensemble:DEXJPUS:1d did exactly that for three nights.
+    """
+    rec = _record_for(
+        _report(passed=True),
+        family="ensemble:DEXJPUS:1d",
+        strat_name="ensemble",
+        symbol="DEXJPUS",
+        source="fred",
+        tf="1d",
+        ppy=252.0,
+        last_ts=1_000,
+        existing=None,
+        research_only=True,
+    )
+    assert rec.status == "candidate"
+    assert rec.incubation_start_ts is None, "no clock, because no verdict is coming"
+    assert rec.metrics["passed"] is True, "the pass itself must not be lost"
+    assert rec.metrics["research_only"] is True
+
+
+def test_a_tradeable_pass_still_incubates():
+    """The contrast that makes the previous test meaningful."""
+    rec = _record_for(
+        _report(passed=True),
+        family="tsmom:BTC/JPY:1d",
+        strat_name="tsmom",
+        symbol="BTC/JPY",
+        source="bitbank",
+        tf="1d",
+        ppy=365.0,
+        last_ts=1_000,
+        existing=None,
+        research_only=False,
+    )
+    assert rec.status == "incubating" and rec.incubation_start_ts == 1_000
+
+
+def test_a_research_only_pass_is_not_mistaken_for_a_reject():
+    """shadow.py tracks *rejects*; a passing row is not one, whatever its status."""
+    from engine.orchestration.shadow import _rejected
+
+    passing = {"status": "candidate", "metrics": {"passed": True, "research_only": True}}
+    failing = {"status": "candidate", "metrics": {"passed": False, "research_only": True}}
+    assert _rejected(passing) is False
+    assert _rejected(failing) is True
+
+
+def test_the_report_counts_research_only_passes_separately(tmp_path):
+    """Lumping them into "rejected" is as wrong as lumping them into "incubating"."""
+    from engine.orchestration.population import StrategyRecord
+    from engine.reporting.report import _pipeline_section
+
+    population = Population(tmp_path / "population.db")
+    rows = [
+        ("ensemble:DEXJPUS:1d", "fred", "DEXJPUS", "candidate", True, True),
+        ("tsmom:DEXJPUS:1d", "fred", "DEXJPUS", "candidate", False, True),
+        ("tsmom:BTC/JPY:1d", "bitbank", "BTC/JPY", "candidate", False, False),
+    ]
+    for family, source, symbol, status, passed, research_only in rows:
+        population.upsert(
+            StrategyRecord(
+                family=family,
+                strategy=family.split(":")[0],
+                symbol=symbol,
+                source=source,
+                timeframe="1d",
+                params={},
+                status=status,
+                metrics={"passed": passed, "research_only": research_only, "ppy": 365.0},
+            )
+        )
+    population.close()
+
+    headline = _pipeline_section(tmp_path)[0]
+    assert "rejected: 2" in headline
+    assert "research-only passes: 1" in headline
+    assert "incubating: 0" in headline

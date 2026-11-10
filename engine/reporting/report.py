@@ -156,12 +156,22 @@ def _pipeline_section(state_dir: Path) -> list[str]:
     except Exception:
         return ["_population.db unreadable_"]
 
+    def _metrics(row) -> dict:
+        return json.loads(row["metrics"]) if isinstance(row["metrics"], str) else row["metrics"]
+
     incubating = [r for r in rows if r["status"] == "incubating"]
     candidates = [r for r in rows if r["status"] == "candidate"]
     retired = [r for r in rows if r["status"] == "retired"]
+    # A research-only family can clear the gate but never trade (no venue carries the
+    # series), so it stays a candidate. Counting it as "rejected" would be as wrong as
+    # counting it as "incubating": it is a passing hypothesis that informs the archetypes
+    # and will never be promoted. It gets its own number rather than hiding in either.
+    research_passes = [r for r in candidates if _metrics(r).get("passed")]
+    rejected = [r for r in candidates if not _metrics(r).get("passed")]
 
     out: list[str] = [
-        f"_incubating: {len(incubating)} | rejected: {len(candidates)} | retired: {len(retired)}_",
+        f"_incubating: {len(incubating)} | rejected: {len(rejected)} | "
+        f"research-only passes: {len(research_passes)} | retired: {len(retired)}_",
         "",
     ]
     if not incubating:

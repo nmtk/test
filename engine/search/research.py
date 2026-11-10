@@ -170,6 +170,18 @@ def _record_for(
     if not report.passed:
         return StrategyRecord(**base, status="candidate")
 
+    if research_only:
+        # It passed, and it stays a candidate, because `incubating` is defined by a forward
+        # test this row will never be given: the promotion FSM skips research-only records
+        # before computing forward returns (no venue can fill them), so nothing would ever
+        # move it out again. Parking it in `incubating` would mean a row permanently
+        # labelled "awaiting a verdict" that is not awaiting anything, and it would inflate
+        # the incubating count — the number read as "strategies on their way to trading" —
+        # with rows that can never trade. The pass itself is not lost: it is recorded in
+        # metrics["passed"], which is how the report counts these separately and how
+        # shadow.py knows not to treat them as rejects.
+        return StrategyRecord(**base, status="candidate")
+
     # The family is free (candidate, retired, or new), so tonight's pass takes it and the
     # forward clock starts at the last bar the gate saw. Incumbents never get here —
     # held_incumbent returned their row above, which is also what keeps a champion's
