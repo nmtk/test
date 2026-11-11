@@ -8283,7 +8283,7 @@
       "strategy": "ensemble",
       "symbol": "XRP/JPY",
       "timeframe": "1d",
-      "weight": 0.0592
+      "weight": 0.0538
     },
     {
       "params": {
@@ -10481,7 +10481,7 @@
       "strategy": "ensemble",
       "symbol": "ETH/JPY",
       "timeframe": "1d",
-      "weight": 0.0624
+      "weight": 0.0656
     },
     {
       "params": {
@@ -17978,5 +17978,5 @@
       "weight": 0.0
     }
   ],
-  "updated": "2026-11-11T06:42:13.176598+00:00"
+  "updated": "2026-11-11T10:42:11.890975+00:00"
 }
