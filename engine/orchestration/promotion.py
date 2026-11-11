@@ -33,6 +33,7 @@ from engine.backtest.metrics import max_drawdown
 from engine.core.clock import timeframe_seconds
 from engine.core.config import Settings, load_universe
 from engine.data.store import OHLCVStore
+from engine.features.context import ContextAugmenter
 from engine.monitor.decay import page_hinkley, sharpe_lower_band
 from engine.orchestration.champions import Allocation, Champions, save_champions
 from engine.orchestration.population import Population
@@ -105,11 +106,39 @@ def _record_costs(record: dict, cfg: PromotionConfig) -> tuple[float, float]:
     )
 
 
-def forward_returns(store: OHLCVStore, record: dict, cfg: PromotionConfig, start_ts: int):
-    """Recompute the strategy's net returns on bars strictly after ``start_ts`` (forward/OOS)."""
+def forward_returns(
+    store: OHLCVStore,
+    record: dict,
+    cfg: PromotionConfig,
+    start_ts: int,
+    augmenter: ContextAugmenter | None,
+):
+    """Recompute the strategy's net returns on bars strictly after ``start_ts`` (forward/OOS).
+
+    ``augmenter`` stamps the ``ctx_*`` and ``mac_*`` columns, and passing it is not
+    optional in practice: research computes weights on augmented bars, and so do the paper
+    and live executors, so a forward test on raw bars measures *a different strategy than
+    the gate validated*. For anything reading a context feature the difference is total —
+    the column is missing, the signal reads neutral, and the strategy returns flat. All
+    three ``gp:*`` rows incubating on 2026-11-11 had zero exposure across the entire
+    series on raw bars and 14-20% once augmented, so their forward Sharpe was structurally
+    0.0, which can never satisfy ``incubation_passed``'s ``fwd.sharpe > 0.0``. They were
+    not slow to promote; they were unpromotable. Eight of the other rows differed too.
+
+    The parameter is required rather than defaulted so that a caller must decide. ``None``
+    is accepted, and means "this strategy uses no context features" — correct only for a
+    pure price archetype.
+    """
     bars = store.read(record["source"], record["symbol"], record["timeframe"])
     if len(bars) == 0 or start_ts is None:
         return None
+    if augmenter is not None:
+        bars = augmenter.augment(
+            bars,
+            source=record["source"],
+            symbol=record["symbol"],
+            timeframe=record["timeframe"],
+        )
     ppy = float(record["metrics"].get("ppy", 365.0))
     weights = get_strategy(record["strategy"])(**record["params"]).weights(bars)
     fee_bps, slippage_bps = _record_costs(record, cfg)
@@ -269,9 +298,13 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
     cfg = cfg or PromotionConfig()
     store = OHLCVStore(settings.data_dir / "ohlcv")
     population = Population(settings.state_dir / "population.db")
+    universe = load_universe(settings.universe_path)
+    # The same augmentation research and both executors apply. Built once: it loads the
+    # context series from disk.
+    augmenter = ContextAugmenter.from_settings(settings, universe)
     summary = PromotionSummary()
     try:
-        tradeable = {e.instrument.symbol for e in load_universe(settings.universe_path).entries}
+        tradeable = {e.instrument.symbol for e in universe.entries}
         for rec in population.list("incubating"):
             summary.n_incubating += 1
             if (rec.get("metrics") or {}).get("research_only"):
@@ -291,7 +324,7 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
                 # what can be filled.
                 summary.n_untradeable += 1
                 continue
-            fwd = forward_returns(store, rec, cfg, rec.get("incubation_start_ts"))
+            fwd = forward_returns(store, rec, cfg, rec.get("incubation_start_ts"), augmenter)
             if incubation_passed(fwd, rec["metrics"], cfg, rec["timeframe"]):
                 population.update_fields(
                     rec["family"], status="champion", champion_start_ts=_last_ts(store, rec)
@@ -310,7 +343,7 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
 
         for rec in population.list("champion"):
             summary.n_champions_checked += 1
-            fwd = forward_returns(store, rec, cfg, rec.get("champion_start_ts"))
+            fwd = forward_returns(store, rec, cfg, rec.get("champion_start_ts"), augmenter)
             if decay_detected(fwd, rec["metrics"], cfg):
                 population.update_fields(rec["family"], status="retired")
                 summary.n_retired += 1
