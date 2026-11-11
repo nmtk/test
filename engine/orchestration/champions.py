@@ -66,6 +66,14 @@ def save_champions(path: Path, champions: Champions) -> None:
 
     A no-op write also keeps the hourly churn out of git history, since the file is
     committed on every executor run.
+
+    One line per allocation, with its params compact. ``indent=2`` over a whole book is
+    pathological here: a GP program is a deeply nested tree of ``["op", "mul", [...]]``
+    nodes, and pretty-printing one puts every node on its own indented line. The first
+    paper book measured **1,323 KB, of which 65 KB was content** — 95% indentation — and it
+    is rewritten whenever a weight moves, which is every run. Written this way the same
+    book is 65 KB and still greppable by allocation, which is how a human reads it; the
+    readable view of what is allocated is the report's Champions table, not this file.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,7 +82,15 @@ def save_champions(path: Path, champions: Champions) -> None:
             return
     except (OSError, ValueError, KeyError, TypeError):
         pass  # unreadable or malformed on disk -> rewrite it
-    path.write_text(json.dumps(champions.to_dict(), indent=2, sort_keys=True) + "\n")
+    data = champions.to_dict()
+    rows = [
+        "    " + json.dumps(allocation, sort_keys=True, separators=(",", ":"))
+        for allocation in data["allocations"]
+    ]
+    out = ["{", f'  "updated": {json.dumps(data["updated"])},', '  "allocations": [']
+    out.append(",\n".join(rows))
+    out += ["  ]", "}"]
+    path.write_text("\n".join(line for line in out if line != "") + "\n")
 
 
 # The paper executor trades a wider book than the live one: champions *plus* the

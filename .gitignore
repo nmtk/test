@@ -26,3 +26,11 @@ data/cache/
 
 # OS
 .DS_Store
+
+# Derived state, deliberately not versioned.
+# The paper rehearsal book is rewritten by `trade promote`, which runs immediately before
+# `trade paper-step` in the same job, so no run ever reads a committed copy. Versioning it
+# would add ~65KB to git history on every executor run (it was 1.3MB before the compact
+# writer) for a file that is a within-job intermediate. If it is absent, paper_book_path
+# falls back to champions.json, which means an empty book and no trades — the safe failure.
+state/paper_champions.json
