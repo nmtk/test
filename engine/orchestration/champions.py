@@ -75,3 +75,19 @@ def save_champions(path: Path, champions: Champions) -> None:
     except (OSError, ValueError, KeyError, TypeError):
         pass  # unreadable or malformed on disk -> rewrite it
     path.write_text(json.dumps(champions.to_dict(), indent=2, sort_keys=True) + "\n")
+
+
+# The paper executor trades a wider book than the live one: champions *plus* the
+# gate-passers still incubating. See promotion.promote_step for why the rehearsal runs in
+# parallel with incubation rather than after it. The live executor must never read this.
+PAPER_CHAMPIONS_FILE = "paper_champions.json"
+
+
+def paper_book_path(state_dir: Path) -> Path:
+    """The paper executor's book, falling back to champions.json.
+
+    The fallback matters for a state directory written before the rehearsal existed, and
+    for `seed-champions`, which writes champions.json by hand.
+    """
+    paper = Path(state_dir) / PAPER_CHAMPIONS_FILE
+    return paper if paper.is_file() else Path(state_dir) / "champions.json"

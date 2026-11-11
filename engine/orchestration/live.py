@@ -26,7 +26,11 @@ from engine.execution.broker import Broker, reconcile_orders
 from engine.features.context import ContextAugmenter
 from engine.orchestration import state as state_io
 from engine.orchestration.champions import load_champions
-from engine.orchestration.orchestrator import REBALANCE_BAND, StepResult, _resolve_instrument
+from engine.orchestration.orchestrator import (
+    StepResult,
+    _resolve_instrument,
+    apply_no_trade_band,
+)
 from engine.orchestration.risk import RiskLimits, apply_limits
 from engine.strategies import get_strategy
 
@@ -187,9 +191,7 @@ def _size_targets(weights, marks, current, book: float) -> dict[str, float]:
         price = marks[symbol]
         desired = (weight * book / price) if price > 0 else 0.0
         current_qty = current[symbol].qty if symbol in current else 0.0
-        if abs(desired - current_qty) * price < REBALANCE_BAND * max(book, 1.0):
-            desired = current_qty  # no-trade band (anti-churn / idempotency)
-        targets[symbol] = desired
+        targets[symbol] = apply_no_trade_band(desired, current_qty, price, max(book, 1.0))
     return targets
 
 

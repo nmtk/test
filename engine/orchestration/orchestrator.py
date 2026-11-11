@@ -20,7 +20,7 @@ from engine.execution.broker import FeeModel, reconcile_orders
 from engine.execution.paper import PaperBroker
 from engine.features.context import ContextAugmenter
 from engine.orchestration import state as state_io
-from engine.orchestration.champions import load_champions
+from engine.orchestration.champions import load_champions, paper_book_path
 from engine.orchestration.risk import RiskLimits, apply_limits
 from engine.strategies import get_strategy
 
@@ -29,8 +29,46 @@ from engine.strategies import get_strategy
 PAPER_INITIAL_CASH: dict[str, float] = {"JPY": 1_000_000.0, "USD": 10_000.0}
 PAPER_FEE = FeeModel(maker_bps=0.0, taker_bps=12.0)
 PAPER_SLIPPAGE_BPS = 5.0
-# Skip rebalances smaller than this fraction of book equity (anti-churn / idempotency).
+# Ignore a rebalance smaller than this fraction of the *position being adjusted*
+# (anti-churn / idempotency), and refuse to open a position worth less than
+# MIN_POSITION_FRACTION of book equity (anti-dust).
 REBALANCE_BAND = 0.02
+MIN_POSITION_FRACTION = 0.001
+
+
+def apply_no_trade_band(
+    desired: float, current_qty: float, price: float, book_equity: float
+) -> float:
+    """The quantity to actually target, after the no-trade band.
+
+    Two questions that look alike and are not: "is this adjustment too small to bother
+    with?" and "is this position too small to open at all?" The band used to answer both
+    by comparing the change against **book equity**, and that conflation is why this engine
+    placed no order in 1,200 paper runs.
+
+    An allocation weight is a fraction of the book (0.06-0.34 here) and a strategy's signal
+    is a fraction of full exposure (an ensemble averaging eight members emits 0.05, not
+    1.0), so their product -- the intended exposure -- is routinely 1-2% of equity. Against
+    a 2%-of-equity band, the *entire* target position was smaller than the threshold for
+    opening it. Not a dust rebalance being suppressed: the position itself, every time.
+
+    So the two questions are now asked separately. A change is dust relative to the
+    position it adjusts, not to the whole book, which keeps the anti-churn and idempotency
+    properties the band was written for while letting a legitimate small position be
+    opened. Opening is instead governed by an absolute floor, because a position worth a
+    few hundred yen is below exchange minimums and not worth the spread.
+    """
+    if price <= 0 or book_equity <= 0:
+        return current_qty
+    target_value = abs(desired) * price
+    delta_value = abs(desired - current_qty) * price
+    scale = max(abs(desired), abs(current_qty)) * price
+
+    if current_qty == 0.0 and target_value < MIN_POSITION_FRACTION * book_equity:
+        return 0.0  # too small to be worth opening
+    if scale > 0.0 and delta_value < REBALANCE_BAND * scale:
+        return current_qty  # dust adjustment to a position already held
+    return desired
 
 
 @dataclass(slots=True)
@@ -66,7 +104,7 @@ def run_step(
     limits: RiskLimits | None = None,
 ) -> StepResult:
     limits = limits or RiskLimits()
-    champions = load_champions(settings.state_dir / "champions.json")
+    champions = load_champions(paper_book_path(settings.state_dir))
     universe = load_universe(settings.universe_path)
     store = OHLCVStore(settings.data_dir / "ohlcv")
 
@@ -126,11 +164,7 @@ def run_step(
         book_equity = equity.get(currency, 0.0)
         desired = (weight * book_equity / price) if price > 0 else 0.0
         current_qty = current[symbol].qty if symbol in current else 0.0
-        # No-trade band: ignore dust rebalances (keeps cost down and makes re-running the
-        # same bar idempotent, since cost-driven equity drift won't trigger a tiny trade).
-        if abs(desired - current_qty) * price < REBALANCE_BAND * book_equity:
-            desired = current_qty
-        targets_qty[symbol] = desired
+        targets_qty[symbol] = apply_no_trade_band(desired, current_qty, price, book_equity)
 
     orders = reconcile_orders(
         current, targets_qty, instruments, bar_ts_ms=latest_ts, prefix=mode, ref_prices=marks

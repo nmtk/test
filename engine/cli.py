@@ -460,7 +460,7 @@ def _cmd_promote(args: argparse.Namespace) -> int:
         f"promote: incubating={summary.n_incubating} promoted={summary.n_promoted} "
         f"rejected={summary.n_rejected} untradeable={summary.n_untradeable} "
         f"champions_checked={summary.n_champions_checked} "
-        f"retired={summary.n_retired} champions={summary.n_champions}"
+        f"retired={summary.n_retired} champions={summary.n_champions} paper={summary.n_paper}"
     )
     return 0
 

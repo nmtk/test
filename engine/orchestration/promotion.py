@@ -35,7 +35,12 @@ from engine.core.config import Settings, load_universe
 from engine.data.store import OHLCVStore
 from engine.features.context import ContextAugmenter
 from engine.monitor.decay import page_hinkley, sharpe_lower_band
-from engine.orchestration.champions import Allocation, Champions, save_champions
+from engine.orchestration.champions import (
+    PAPER_CHAMPIONS_FILE,
+    Allocation,
+    Champions,
+    save_champions,
+)
 from engine.orchestration.population import Population
 from engine.portfolio.allocate import AllocationConfig, AllocInput, allocate
 from engine.portfolio.regime import RegimeConfig, exposure_scale
@@ -86,6 +91,7 @@ class PromotionSummary:
     n_promoted: int = 0
     n_rejected: int = 0
     n_untradeable: int = 0
+    n_paper: int = 0
     n_champions_checked: int = 0
     n_retired: int = 0
     n_champions: int = 0
@@ -207,11 +213,28 @@ def decay_detected(forward, ref: dict, cfg: PromotionConfig) -> list[str]:
     return reasons
 
 
-def _strategy_returns(store: OHLCVStore, record: dict, cfg: PromotionConfig):
-    """Full net-return series for a champion (used to estimate allocation stats)."""
+def _strategy_returns(
+    store: OHLCVStore,
+    record: dict,
+    cfg: PromotionConfig,
+    augmenter: ContextAugmenter | None,
+):
+    """Full net-return series for a champion (used to estimate allocation stats).
+
+    Needs the same augmentation as ``forward_returns``, and for the same reason: these
+    returns set the allocation weights and the correlation matrix, so measuring a
+    context-reading strategy as flat would size it from a series of zeros.
+    """
     bars = store.read(record["source"], record["symbol"], record["timeframe"])
     if len(bars) < 2:
         return None
+    if augmenter is not None:
+        bars = augmenter.augment(
+            bars,
+            source=record["source"],
+            symbol=record["symbol"],
+            timeframe=record["timeframe"],
+        )
     ppy = float(record["metrics"].get("ppy", 365.0))
     weights = get_strategy(record["strategy"])(**record["params"]).weights(bars)
     fee_bps, slippage_bps = _record_costs(record, cfg)
@@ -233,12 +256,23 @@ def allocate_champions(
     alloc_cfg: AllocationConfig | None = None,
     regime_cfg: RegimeConfig | None = None,
     recent_bars: int = RECENT_ALLOC_BARS,
+    augmenter: ContextAugmenter | None = None,
+    statuses: tuple[str, ...] = ("champion",),
+    tradeable: set[str] | None = None,
 ) -> Champions:
-    """Confidence-weighted, correlation-aware, regime-scaled allocation over champions."""
+    """Confidence-weighted, correlation-aware, regime-scaled allocation.
+
+    ``statuses`` selects which population rows are eligible. It defaults to champions
+    alone, which is what the live executor must ever see. The paper rehearsal passes
+    ``("champion", "incubating")`` — see ``promote_step``.
+    """
     alloc_cfg = alloc_cfg or AllocationConfig()
     regime_cfg = regime_cfg or RegimeConfig()
 
-    champs = population.list("champion")
+    champs = [rec for status in statuses for rec in population.list(status)]
+    if tradeable is not None:
+        champs = [c for c in champs if c["symbol"] in tradeable]
+    champs = [c for c in champs if not (c.get("metrics") or {}).get("research_only")]
     champs.sort(
         key=lambda r: (r["metrics"].get("dsr", 0.0), r["metrics"].get("cpcv_median", 0.0)),
         reverse=True,
@@ -248,7 +282,7 @@ def allocate_champions(
     # Recent forward returns per champion -> allocation stats + correlation matrix.
     recent: dict[str, np.ndarray] = {}
     for rec in champs:
-        series = _strategy_returns(store, rec, promo_cfg)
+        series = _strategy_returns(store, rec, promo_cfg, augmenter)
         if series is not None and len(series) >= 10:
             recent[rec["family"]] = np.asarray(series.tail(recent_bars), dtype=float)
     champs = [c for c in champs if c["family"] in recent]
@@ -267,9 +301,17 @@ def allocate_champions(
         )
         for c, row in zip(champs, matrix, strict=True)
     ]
-    corr = (
-        np.nan_to_num(np.corrcoef(matrix), nan=0.0) if (len(champs) >= 2 and length >= 3) else None
-    )
+    # A strategy that held no position across the window has zero return variance, so
+    # corrcoef divides by it and yields NaN for that row and column. nan_to_num then reads
+    # it as "uncorrelated", which is the right default, and the allocator separately gives
+    # it zero weight for having no recent evidence. errstate only keeps the expected
+    # division out of the logs, where it would otherwise look like a fault worth chasing.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        corr = (
+            np.nan_to_num(np.corrcoef(matrix), nan=0.0)
+            if (len(champs) >= 2 and length >= 3)
+            else None
+        )
     weights = allocate(inputs, corr, alloc_cfg)
 
     allocations = []
@@ -348,8 +390,36 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
                 population.update_fields(rec["family"], status="retired")
                 summary.n_retired += 1
 
-        champions = allocate_champions(population, store, promo_cfg=cfg)
+        # champions.json is the live book: champions only. The live executor reads this and
+        # nothing else, so promotion stays the only door to real capital.
+        champions = allocate_champions(
+            population, store, promo_cfg=cfg, augmenter=augmenter, tradeable=tradeable
+        )
         save_champions(settings.state_dir / "champions.json", champions)
+
+        # paper_champions.json is the rehearsal book: champions *plus* the gate-passers
+        # still incubating. Paper trading costs nothing and tests what the forward test
+        # cannot. Incubation recomputes returns from stored bars, so it measures the edge
+        # and nothing else; it never places an order, never pays a spread, never rounds a
+        # position to a lot size and never has an order rejected. Waiting for promotion
+        # before exercising any of that means the first order this engine ever sends would
+        # go out with eight strategies at once, on the day capital is at stake. The
+        # executor has run over 1,200 times and placed zero orders; fills.parquet does not
+        # exist. So the rehearsal runs in parallel with incubation, not after it.
+        #
+        # It cannot affect a verdict: incubation and decay are measured from bars, not from
+        # this account. research_only and non-universe rows are excluded by
+        # allocate_champions, so nothing unfillable reaches even the paper broker.
+        paper = allocate_champions(
+            population,
+            store,
+            promo_cfg=cfg,
+            augmenter=augmenter,
+            statuses=("champion", "incubating"),
+            tradeable=tradeable,
+        )
+        save_champions(settings.state_dir / PAPER_CHAMPIONS_FILE, paper)
+        summary.n_paper = len(paper.allocations)
         summary.n_champions = len(champions.allocations)
     finally:
         population.close()

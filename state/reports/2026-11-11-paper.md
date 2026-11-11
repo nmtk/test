@@ -1,21 +1,25 @@
 # trade — paper report
 
-_generated 2026-11-11T02:41:46.456733+00:00 | cumulative trials: 855,076_
+_generated 2026-11-11T06:48:21.121853+00:00 | cumulative trials: 855,076_
 
 ## Champions (0)
 _none — waiting for a strategy to clear research → incubation → promotion_
 
 ## Positions
-_flat_
+| symbol | qty | avg |
+|---|---|---|
+| BTC/JPY | 0.00155838 | 1.17369e+07 |
 
 ## Equity
 | currency | start | current | return | max_dd | points |
 |---|---|---|---|---|---|
-| JPY | 1,000,000 | 1,000,000 | +0.00% | 0.00% | 923 |
-| USD | 10,000 | 10,000 | +0.00% | 0.00% | 923 |
+| JPY | 1,000,000 | 999,969 | -0.00% | -0.00% | 926 |
+| USD | 10,000 | 10,000 | +0.00% | 0.00% | 926 |
 
 ## Recent fills
-_no fills yet_
+| time | symbol | side | qty | price | fee |
+|---|---|---|---|---|---|
+| 2026-11-11T06:46:12.769346+00:00 | BTC/JPY | buy | 0.00155838 | 1.17369e+07 | 21.95 |
 
 ## Pipeline
 _incubating: 11 | rejected: 145 | research-only passes: 1 | retired: 0_
