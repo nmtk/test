@@ -77,6 +77,7 @@ def returns_for_configs(
     fee_bps: float = 0.0,
     slippage_bps: float = 0.0,
     ppy: float = 365.0,
+    long_only: bool = False,
 ) -> np.ndarray:
     """Backtest each config and stack per-bar returns into a (T x C) matrix."""
     columns = []
@@ -87,6 +88,7 @@ def returns_for_configs(
             fee_bps=fee_bps,
             slippage_bps=slippage_bps,
             periods_per_year=ppy,
+            long_only=long_only,
         )
         columns.append(result.returns.to_numpy(dtype=float))
     return np.column_stack(columns)

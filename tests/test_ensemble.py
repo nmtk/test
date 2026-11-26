@@ -170,6 +170,7 @@ def test_discover_ensemble_forms_pool_and_inherits_trials(tmp_path):
         slippage_bps=0.0,
         ledger=ledger,
         family="ensemble:TST/JPY:1h",
+        long_only=False,
     )
     pop.close()
     assert report is not None
@@ -200,6 +201,7 @@ def test_discover_ensemble_dedupes_clones_to_none(tmp_path):
         ppy=8760.0,
         fee_bps=0.0,
         slippage_bps=0.0,
+        long_only=False,
     )
     pop.close()
     assert report is None
@@ -221,6 +223,7 @@ def test_discover_ensemble_drops_unprofitable_members(tmp_path):
         ppy=8760.0,
         fee_bps=0.0,
         slippage_bps=0.0,
+        long_only=False,
     )
     pop.close()
     assert report is None

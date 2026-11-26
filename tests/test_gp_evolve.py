@@ -73,6 +73,7 @@ def test_discover_gp_runs_gate_and_counts_trials(tmp_path):
         ledger=led,
         family="gp:BTC/JPY:1h",
         thresholds=GateThresholds(),
+        long_only=False,
     )
     assert isinstance(report, ValidationReport)
     assert "program" in report.best_params

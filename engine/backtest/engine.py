@@ -57,12 +57,24 @@ def backtest_strategy(
     fee_bps: float = 0.0,
     slippage_bps: float = 0.0,
     periods_per_year: float = 365.0,
+    long_only: bool = False,
 ) -> BacktestResult:
     """Backtest one strategy instance on ``bars``.
 
     A strategy whose fills cannot be expressed as close-to-close weights (resting orders
     that fill inside the bar) provides its own ``backtest``; every other strategy is
     run through :func:`run_backtest` on its weights.
+
+    ``long_only`` drops short exposure before costing, which is what the executor does on
+    a venue that cannot be shorted: ``engine.orchestration.risk.apply_limits`` clamps a
+    negative weight to zero whenever ``can_short`` is false, and bitbank spot crypto is
+    long-only. Measuring a strategy without that clamp measures a strategy the executor
+    cannot run. ``ensemble:ETH/JPY:1d`` cleared the gate and then spent 100% of its
+    forward window short: forward Sharpe +0.2982 with shorts, +0.0000 without, against a
+    bar of +0.1162. It passed on exposure no order could ever take.
+
+    This stays ``False`` by default because the backtester is a general tool, but the
+    research and promotion entry points are required to pass it.
     """
     own = getattr(strategy, "backtest", None)
     if callable(own):
@@ -72,9 +84,12 @@ def backtest_strategy(
             slippage_bps=slippage_bps,
             periods_per_year=periods_per_year,
         )
+    weights = strategy.weights(bars)
+    if long_only:
+        weights = weights.clip(lower=0.0)
     return run_backtest(
         bars["close"],
-        strategy.weights(bars),
+        weights,
         fee_bps=fee_bps,
         slippage_bps=slippage_bps,
         periods_per_year=periods_per_year,

@@ -79,8 +79,14 @@ def gather_members(
     return members
 
 
-def _net_returns(bars, member: dict, *, fee_bps: float, slippage_bps: float, ppy: float):
+def _net_returns(
+    bars, member: dict, *, fee_bps: float, slippage_bps: float, ppy: float, long_only: bool
+):
     weights = get_strategy(member["strategy"])(**member["params"]).weights(bars)
+    if long_only:
+        # Member scoring and the correlation cap must see the exposure the venue allows,
+        # or the pool is assembled from members whose edge is partly unreachable.
+        weights = weights.clip(lower=0.0)
     result = run_backtest(
         bars["close"], weights, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
     )
@@ -106,6 +112,7 @@ def discover_ensemble(
     corr_cap: float = MEMBER_CORR_CAP,
     min_member_score: float = 0.0,
     max_gp_members: int = 12,
+    long_only: bool,
     **gate_kwargs,
 ) -> ValidationReport | None:
     """Build pool variants from the population + GP HOF and run them through the gate.
@@ -128,9 +135,20 @@ def discover_ensemble(
     for member in candidates:
         try:
             returns = _net_returns(
-                bars, member, fee_bps=fee_bps, slippage_bps=slippage_bps, ppy=ppy
+                bars,
+                member,
+                fee_bps=fee_bps,
+                slippage_bps=slippage_bps,
+                ppy=ppy,
+                long_only=long_only,
             )
-        except Exception:
+        except (ValueError, KeyError, TypeError, ArithmeticError):
+            # A member whose stored params the strategy no longer accepts, or whose feature
+            # column is missing, is simply not a usable member. A NameError or
+            # AttributeError is a bug in this module and must not be mistaken for one:
+            # catching Exception here silently dropped *every* member when a refactor left
+            # `long_only` undefined, and discover_ensemble returned None as though the
+            # population merely had nothing to pool.
             continue
         arr = returns.to_numpy(dtype=float)
         if len(arr) == 0 or not np.isfinite(arr).all() or float(np.std(arr)) == 0.0:
@@ -178,7 +196,13 @@ def discover_ensemble(
         return None
 
     matrix = returns_for_configs(
-        bars, EnsembleStrategy, configs, fee_bps=fee_bps, slippage_bps=slippage_bps, ppy=ppy
+        bars,
+        EnsembleStrategy,
+        configs,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+        ppy=ppy,
+        long_only=long_only,
     )
 
     fam = family or f"ensemble:{symbol}:{timeframe}"

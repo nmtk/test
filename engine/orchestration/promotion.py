@@ -42,6 +42,7 @@ from engine.orchestration.champions import (
     save_champions,
 )
 from engine.orchestration.population import Population
+from engine.orchestration.risk import can_short
 from engine.portfolio.allocate import AllocationConfig, AllocInput, allocate
 from engine.portfolio.regime import RegimeConfig, exposure_scale
 from engine.strategies import get_strategy
@@ -64,6 +65,19 @@ class PromotionConfig:
 
 # How many recent bars of forward returns to estimate allocation stats / correlations from.
 RECENT_ALLOC_BARS = 90
+
+
+def venue_long_only(record: dict, universe) -> bool:
+    """Whether the executor would clamp this record's shorts to zero.
+
+    The same question ``apply_limits`` asks at execution time. A record whose symbol is
+    not in the universe has no venue, so no constraint applies — and it is barred from
+    promotion anyway (see ``promote_step``).
+    """
+    for entry in universe.entries:
+        if entry.instrument.symbol == record["symbol"]:
+            return not can_short(entry.instrument)
+    return False
 
 
 def required_forward_bars(timeframe: str, cfg: PromotionConfig) -> int:
@@ -118,6 +132,7 @@ def forward_returns(
     cfg: PromotionConfig,
     start_ts: int,
     augmenter: ContextAugmenter | None,
+    long_only: bool,
 ):
     """Recompute the strategy's net returns on bars strictly after ``start_ts`` (forward/OOS).
 
@@ -147,6 +162,10 @@ def forward_returns(
         )
     ppy = float(record["metrics"].get("ppy", 365.0))
     weights = get_strategy(record["strategy"])(**record["params"]).weights(bars)
+    if long_only:
+        # The venue cannot be shorted, so short exposure is not a forward result: the
+        # executor would have held nothing. See venue_long_only.
+        weights = weights.clip(lower=0.0)
     fee_bps, slippage_bps = _record_costs(record, cfg)
     result = run_backtest(
         bars["close"],
@@ -218,6 +237,7 @@ def _strategy_returns(
     record: dict,
     cfg: PromotionConfig,
     augmenter: ContextAugmenter | None,
+    long_only: bool,
 ):
     """Full net-return series for a champion (used to estimate allocation stats).
 
@@ -237,6 +257,8 @@ def _strategy_returns(
         )
     ppy = float(record["metrics"].get("ppy", 365.0))
     weights = get_strategy(record["strategy"])(**record["params"]).weights(bars)
+    if long_only:
+        weights = weights.clip(lower=0.0)
     fee_bps, slippage_bps = _record_costs(record, cfg)
     result = run_backtest(
         bars["close"],
@@ -259,6 +281,7 @@ def allocate_champions(
     augmenter: ContextAugmenter | None = None,
     statuses: tuple[str, ...] = ("champion",),
     tradeable: set[str] | None = None,
+    universe=None,
 ) -> Champions:
     """Confidence-weighted, correlation-aware, regime-scaled allocation.
 
@@ -282,7 +305,9 @@ def allocate_champions(
     # Recent forward returns per champion -> allocation stats + correlation matrix.
     recent: dict[str, np.ndarray] = {}
     for rec in champs:
-        series = _strategy_returns(store, rec, promo_cfg, augmenter)
+        series = _strategy_returns(
+            store, rec, promo_cfg, augmenter, venue_long_only(rec, universe) if universe else False
+        )
         if series is not None and len(series) >= 10:
             recent[rec["family"]] = np.asarray(series.tail(recent_bars), dtype=float)
     champs = [c for c in champs if c["family"] in recent]
@@ -366,7 +391,14 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
                 # what can be filled.
                 summary.n_untradeable += 1
                 continue
-            fwd = forward_returns(store, rec, cfg, rec.get("incubation_start_ts"), augmenter)
+            fwd = forward_returns(
+                store,
+                rec,
+                cfg,
+                rec.get("incubation_start_ts"),
+                augmenter,
+                venue_long_only(rec, universe),
+            )
             if incubation_passed(fwd, rec["metrics"], cfg, rec["timeframe"]):
                 population.update_fields(
                     rec["family"], status="champion", champion_start_ts=_last_ts(store, rec)
@@ -385,7 +417,14 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
 
         for rec in population.list("champion"):
             summary.n_champions_checked += 1
-            fwd = forward_returns(store, rec, cfg, rec.get("champion_start_ts"), augmenter)
+            fwd = forward_returns(
+                store,
+                rec,
+                cfg,
+                rec.get("champion_start_ts"),
+                augmenter,
+                venue_long_only(rec, universe),
+            )
             if decay_detected(fwd, rec["metrics"], cfg):
                 population.update_fields(rec["family"], status="retired")
                 summary.n_retired += 1
@@ -393,7 +432,12 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
         # champions.json is the live book: champions only. The live executor reads this and
         # nothing else, so promotion stays the only door to real capital.
         champions = allocate_champions(
-            population, store, promo_cfg=cfg, augmenter=augmenter, tradeable=tradeable
+            population,
+            store,
+            promo_cfg=cfg,
+            augmenter=augmenter,
+            tradeable=tradeable,
+            universe=universe,
         )
         save_champions(settings.state_dir / "champions.json", champions)
 
@@ -417,6 +461,7 @@ def promote_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> P
             augmenter=augmenter,
             statuses=("champion", "incubating"),
             tradeable=tradeable,
+            universe=universe,
         )
         save_champions(settings.state_dir / PAPER_CHAMPIONS_FILE, paper)
         summary.n_paper = len(paper.allocations)

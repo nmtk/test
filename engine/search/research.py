@@ -25,6 +25,7 @@ from engine.execution.broker import intrabar_research_costs, research_costs
 from engine.features.context import ContextAugmenter
 from engine.gp.evolve import GPConfig
 from engine.orchestration.population import Population, StrategyRecord
+from engine.orchestration.risk import can_short
 from engine.search.ensemble import discover_ensemble
 from engine.search.gp_search import discover_gp
 from engine.search.optuna_search import discover_challenger
@@ -232,7 +233,9 @@ def run_research(
         # is shallow. They are researched exactly like tradeable ones and then barred
         # from promotion (see engine/orchestration/promotion.py), because their source is
         # not a venue any order can reach.
-        Researchable = namedtuple("Researchable", "symbol source asset_class timeframes only")
+        Researchable = namedtuple(
+            "Researchable", "symbol source asset_class timeframes only long_only"
+        )
         targets = [
             Researchable(
                 e.instrument.symbol,
@@ -240,10 +243,20 @@ def run_research(
                 e.instrument.asset_class,
                 e.timeframes,
                 False,
+                # Measure the exposure the venue permits. apply_limits clamps a negative
+                # weight to zero wherever can_short is false (bitbank spot crypto), so a
+                # search that scores unconstrained long/short weights scores a strategy no
+                # order can take. ensemble:ETH/JPY:1d cleared the gate and then spent its
+                # whole forward window short: +0.2982 with shorts, +0.0000 without, on a
+                # bar of +0.1162. The gate's own verdict was about exposure the executor
+                # would have thrown away.
+                not can_short(e.instrument),
             )
             for e in researchable
         ] + [
-            Researchable(r.symbol, r.source, r.asset_class, r.timeframes, True)
+            # A research-only series has no venue, so no venue constraint applies; it is
+            # barred from promotion anyway and exists to inform the archetypes.
+            Researchable(r.symbol, r.source, r.asset_class, r.timeframes, True, False)
             for r in universe.research_series
         ]
         for entry in targets:
@@ -308,6 +321,7 @@ def run_research(
                         ledger=ledger,
                         family=family,
                         inherited_trials=inherited,
+                        long_only=entry.long_only,
                     )
                     population.upsert(
                         _record_for(
@@ -355,6 +369,7 @@ def run_research(
                             ledger=ledger,
                             family=family,
                             hof_path=hof_path,
+                            long_only=entry.long_only,
                         )
                         population.upsert(
                             _record_for(
@@ -401,6 +416,7 @@ def run_research(
                         thresholds=thresholds,
                         ledger=ledger,
                         family=family,
+                        long_only=entry.long_only,
                     )
                     if report is not None:
                         population.upsert(

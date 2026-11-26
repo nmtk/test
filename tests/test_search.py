@@ -38,7 +38,14 @@ def test_search_is_deterministic():
 def test_discover_challenger_counts_trials_in_ledger(tmp_path):
     led = TrialLedger.load(tmp_path / "trial_ledger.json")
     report = discover_challenger(
-        _bars(), TimeSeriesMomentum, n_trials=8, ppy=365.0, seed=0, ledger=led, family="f"
+        _bars(),
+        TimeSeriesMomentum,
+        n_trials=8,
+        ppy=365.0,
+        seed=0,
+        ledger=led,
+        family="f",
+        long_only=False,
     )
     assert isinstance(report, ValidationReport)
     assert "lookback" in report.best_params
@@ -48,7 +55,13 @@ def test_discover_challenger_counts_trials_in_ledger(tmp_path):
 
 def test_discover_challenger_runs_gate():
     report = discover_challenger(
-        _bars(), TimeSeriesMomentum, n_trials=8, ppy=365.0, seed=0, thresholds=GateThresholds()
+        _bars(),
+        TimeSeriesMomentum,
+        n_trials=8,
+        ppy=365.0,
+        seed=0,
+        thresholds=GateThresholds(),
+        long_only=False,
     )
     # full gate metrics are populated regardless of pass/fail
     assert 0.0 <= report.pbo <= 1.0

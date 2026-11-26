@@ -39,6 +39,7 @@ def discover_gp(
     ledger: TrialLedger | None = None,
     family: str | None = None,
     hof_path: Path | None = None,
+    long_only: bool,
     **gate_kwargs,
 ) -> ValidationReport:
     # Load prior-run HOF to warm-start this run's population.
@@ -58,7 +59,13 @@ def discover_gp(
 
     configs = [{"program": program} for program, _ in result.hall_of_fame]
     matrix = returns_for_configs(
-        bars, GPStrategy, configs, fee_bps=fee_bps, slippage_bps=slippage_bps, ppy=ppy
+        bars,
+        GPStrategy,
+        configs,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+        ppy=ppy,
+        long_only=long_only,
     )
 
     fam = family or "gp"

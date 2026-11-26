@@ -25,6 +25,7 @@ def robust_score(
     turnover_penalty: float = DEFAULT_TURNOVER_PENALTY,
     cpcv_groups: int = 6,
     cpcv_test_groups: int = 2,
+    long_only: bool = False,
 ) -> float:
     result = backtest_strategy(
         strategy_cls(**params),
@@ -32,6 +33,7 @@ def robust_score(
         fee_bps=fee_bps,
         slippage_bps=slippage_bps,
         periods_per_year=ppy,
+        long_only=long_only,
     )
     cpcv = cpcv_sharpes(
         result.returns, n_groups=cpcv_groups, n_test_groups=cpcv_test_groups, ppy=ppy

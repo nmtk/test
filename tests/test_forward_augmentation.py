@@ -93,7 +93,9 @@ def test_carry_is_flat_without_its_feature():
 
 
 def test_the_unaugmented_forward_series_is_all_zeros():
-    fwd = forward_returns(_Store(_bars()), _record(), PromotionConfig(), 1_700_000_000_000, None)
+    fwd = forward_returns(
+        _Store(_bars()), _record(), PromotionConfig(), 1_700_000_000_000, None, False
+    )
     assert fwd is not None and len(fwd) > 0
     assert np.count_nonzero(np.asarray(fwd, dtype=float)) == 0, (
         "a flat forward series can never satisfy incubation_passed's fwd.sharpe > 0.0"
@@ -103,7 +105,7 @@ def test_the_unaugmented_forward_series_is_all_zeros():
 def test_augmenting_makes_it_the_strategy_that_was_validated():
     augmenter = _Augmenter()
     fwd = forward_returns(
-        _Store(_bars()), _record(), PromotionConfig(), 1_700_000_000_000, augmenter
+        _Store(_bars()), _record(), PromotionConfig(), 1_700_000_000_000, augmenter, False
     )
     assert np.count_nonzero(np.asarray(fwd, dtype=float)) > 0
     assert augmenter.calls == [("oanda", "USD/JPY", "1d")], (
@@ -114,9 +116,11 @@ def test_augmenting_makes_it_the_strategy_that_was_validated():
 def test_a_price_only_strategy_is_unaffected():
     """The fix must not change what it was already measuring correctly."""
     record = _record() | {"strategy": "tsmom", "params": {"lookback": 20}}
-    raw = forward_returns(_Store(_bars()), record, PromotionConfig(), 1_700_000_000_000, None)
+    raw = forward_returns(
+        _Store(_bars()), record, PromotionConfig(), 1_700_000_000_000, None, False
+    )
     aug = forward_returns(
-        _Store(_bars()), record, PromotionConfig(), 1_700_000_000_000, _Augmenter()
+        _Store(_bars()), record, PromotionConfig(), 1_700_000_000_000, _Augmenter(), False
     )
     np.testing.assert_allclose(np.asarray(raw, dtype=float), np.asarray(aug, dtype=float))
 
@@ -127,21 +131,25 @@ def test_the_augmenter_argument_is_required():
         forward_returns(_Store(_bars()), _record(), PromotionConfig(), 1_700_000_000_000)
 
 
-def test_promote_step_supplies_an_augmenter():
-    """The FSM is the caller that was wrong; pin that it now passes one.
+def test_the_pipeline_cannot_omit_the_augmenter_or_the_venue_constraint():
+    """Both are required parameters, which is what makes omitting one impossible.
 
-    Checked by signature rather than by running the FSM, so the assertion survives a
-    refactor of promote_step's internals while still failing if the argument is dropped.
+    Checked on the signature rather than by scanning call sites: a source scan broke the
+    moment the call wrapped onto several lines, and it never tested the thing that matters
+    anyway. A parameter with no default cannot be forgotten — the two bugs this file and
+    the venue-constraint fix are about were both silent defaults.
     """
     import inspect
 
-    from engine.orchestration import promotion, shadow
+    from engine.orchestration.promotion import _strategy_returns, forward_returns
 
-    for module in (promotion, shadow):
-        source = inspect.getsource(module)
-        calls = [line for line in source.splitlines() if "forward_returns(" in line]
-        calls = [c for c in calls if "def forward_returns" not in c]
-        assert calls, f"{module.__name__} no longer calls forward_returns"
-        assert all("augmenter" in c for c in calls), (
-            f"{module.__name__} calls forward_returns without an augmenter: {calls}"
-        )
+    for fn, required in (
+        (forward_returns, ("augmenter", "long_only")),
+        (_strategy_returns, ("augmenter", "long_only")),
+    ):
+        params = inspect.signature(fn).parameters
+        for name in required:
+            assert name in params, f"{fn.__name__} lost its {name} parameter"
+            assert params[name].default is inspect.Parameter.empty, (
+                f"{fn.__name__}'s {name} has a default, so a caller can silently omit it"
+            )

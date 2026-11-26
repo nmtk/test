@@ -71,9 +71,15 @@ def cpcv_evaluate_strategy(
     n_groups: int = 6,
     n_test_groups: int = 2,
     embargo_frac: float = 0.01,
+    long_only: bool = False,
 ) -> CPCVResult:
     result = backtest_strategy(
-        strategy, bars, fee_bps=fee_bps, slippage_bps=slippage_bps, periods_per_year=ppy
+        strategy,
+        bars,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+        periods_per_year=ppy,
+        long_only=long_only,
     )
     return cpcv_sharpes(
         result.returns,

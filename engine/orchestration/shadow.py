@@ -78,6 +78,7 @@ from engine.orchestration.promotion import (
     forward_returns,
     incubation_passed,
     required_forward_bars,
+    venue_long_only,
 )
 from engine.strategies import get_strategy
 from engine.validation.stats import return_moments
@@ -252,7 +253,8 @@ def shadow_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> Sh
     ledger = ShadowLedger(settings.state_dir / "shadow")
     # Same augmentation as the gate used; without it a context-reading strategy is
     # measured flat and every verdict about it is about a strategy that does not exist.
-    augmenter = ContextAugmenter.from_settings(settings, load_universe(settings.universe_path))
+    universe = load_universe(settings.universe_path)
+    augmenter = ContextAugmenter.from_settings(settings, universe)
     summary = ShadowSummary()
     try:
         # 1. Close any track whose forward window is now long enough to judge.
@@ -267,7 +269,14 @@ def shadow_step(settings: Settings, *, cfg: PromotionConfig | None = None) -> Sh
                 "metrics": track["gate_metrics"],
             }
             try:
-                fwd = forward_returns(store, record, cfg, track["start_ts"], augmenter)
+                fwd = forward_returns(
+                    store,
+                    record,
+                    cfg,
+                    track["start_ts"],
+                    augmenter,
+                    venue_long_only(record, universe),
+                )
             except Exception as exc:  # a param set the strategy no longer accepts
                 summary.n_errors += 1
                 summary.errors.append(f"{track['family']}: {type(exc).__name__}: {exc}")

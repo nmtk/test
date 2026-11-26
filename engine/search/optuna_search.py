@@ -43,6 +43,7 @@ def search(
     slippage_bps: float = 5.0,
     seed: int = 0,
     turnover_penalty: float = DEFAULT_TURNOVER_PENALTY,
+    long_only: bool = False,
 ) -> SearchOutcome:
     sampler = optuna.samplers.TPESampler(seed=seed)
     study = optuna.create_study(direction="maximize", sampler=sampler)
@@ -57,6 +58,7 @@ def search(
             slippage_bps=slippage_bps,
             ppy=ppy,
             turnover_penalty=turnover_penalty,
+            long_only=long_only,
         )
 
     study.optimize(objective, n_trials=n_trials)
@@ -88,6 +90,7 @@ def discover_challenger(
     ledger: TrialLedger | None = None,
     family: str | None = None,
     inherited_trials: int = 0,
+    long_only: bool,
     **gate_kwargs,
 ) -> ValidationReport:
     """Search, then validate the explored family through the gate; returns its report.
@@ -103,10 +106,17 @@ def discover_challenger(
         fee_bps=fee_bps,
         slippage_bps=slippage_bps,
         seed=seed,
+        long_only=long_only,
     )
     configs = outcome.configs
     matrix = returns_for_configs(
-        bars, strategy_cls, configs, fee_bps=fee_bps, slippage_bps=slippage_bps, ppy=ppy
+        bars,
+        strategy_cls,
+        configs,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+        ppy=ppy,
+        long_only=long_only,
     )
 
     fam = family or getattr(strategy_cls, "name", "global")

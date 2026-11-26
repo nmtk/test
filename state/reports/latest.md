@@ -1,6 +1,6 @@
 # trade — paper report
 
-_generated 2026-11-25T22:24:03.634543+00:00 | cumulative trials: 986,307_
+_generated 2026-11-26T03:18:48.193715+00:00 | cumulative trials: 986,307_
 
 ## Champions (0)
 _none — waiting for a strategy to clear research → incubation → promotion_
@@ -29,22 +29,12 @@ _flat_
 | 2026-11-18T21:48:51.201064+00:00 | BTC/JPY | sell | 0.00037128 | 9.97023e+06 | 4.442 |
 
 ## Pipeline
-_incubating: 12 | rejected: 145 | research-only passes: 0 | retired: 0_
+_incubating: 2 | rejected: 145 | research-only passes: 10 | retired: 0_
 
 | family | since | bt_sharpe | dsr | pbo |
 |---|---|---|---|---|
-| ensemble:BTC/JPY:1d | 2026-11-03 | 2.96 | 1.000 | 0.175 |
-| ensemble:BTC/JPY:1h | 2026-11-05 | 2.75 | 1.000 | 0.194 |
-| ensemble:BTC/JPY:4h | 2026-11-07 | 3.30 | 1.000 | 0.147 |
-| ensemble:ETH/JPY:1d | 2026-11-02 | 2.89 | 1.000 | 0.179 |
-| ensemble:ETH/JPY:4h | 2026-11-04 | 2.45 | 0.999 | 0.155 |
 | ensemble:USD/JPY:1d | 2026-11-02 | 2.78 | 0.998 | 0.198 |
 | ensemble:USD/JPY:1h | 2026-11-24 | 2.07 | 0.988 | 0.194 |
-| ensemble:XRP/JPY:1d | 2026-11-02 | 2.83 | 1.000 | 0.020 |
-| ensemble:XRP/JPY:4h | 2026-11-04 | 2.81 | 1.000 | 0.103 |
-| gp:BTC/JPY:1d | 2026-11-07 | 2.81 | 1.000 | 0.083 |
-| gp:ETH/JPY:1d | 2026-11-02 | 2.60 | 1.000 | 0.075 |
-| gp:ETH/JPY:1h | 2026-11-04 | 2.93 | 0.995 | 0.032 |
 
 ## Shadow (rejected candidates, tracked forward)
 _tracking: 153 | verdicts: 0 (never traded: 0) | worth trading: 0 of 0 (n/a)_
@@ -168,15 +158,15 @@ _合格基準: DSR ≥ 0.95 / PBO ≤ 0.20 / SPA p ≤ 0.05 / CPCV 中央値 ≥
 
 | symbol | tf | bt_sharpe | max_dd | dsr | pbo | spa_p | cpcv_med | 結果 |
 |---|---|---|---|---|---|---|---|---|
-| ETH/JPY | 1d | +2.60 | -3.59% | 1.000 | 0.075 | 0.006 | +2.813 | **incubating** |
-| BTC/JPY | 1d | +2.81 | -3.75% | 1.000 | 0.083 | 0.018 | +3.285 | **incubating** |
+| ETH/JPY | 1d | +2.60 | -3.59% | 1.000 | 0.075 | 0.006 | +2.813 | **rejected** |
+| BTC/JPY | 1d | +2.81 | -3.75% | 1.000 | 0.083 | 0.018 | +3.285 | **rejected** |
 | XRP/JPY | 1d | +2.78 | -16.66% | 1.000 | 0.107 | 0.008 | +3.079 | **rejected** |
 | BTC/JPY | 1h | +2.91 | -5.34% | 1.000 | 0.516 | 0.000 | +3.424 | **rejected** |
 | XRP/JPY | 1h | +2.36 | -17.53% | 1.000 | 0.710 | 0.000 | +3.161 | **rejected** |
 | DEXJPUS | 1d | +0.66 | -14.11% | 1.000 | 0.524 | 0.000 | +0.658 | **rejected** |
 | BTC/JPY | 4h | +2.51 | -19.46% | 1.000 | 0.599 | 0.000 | +2.555 | **rejected** |
 | XRP/JPY | 4h | +2.33 | -9.08% | 0.997 | 0.151 | 0.020 | +2.687 | **rejected** |
-| ETH/JPY | 1h | +2.93 | -11.23% | 0.995 | 0.032 | 0.000 | +3.498 | **incubating** |
+| ETH/JPY | 1h | +2.93 | -11.23% | 0.995 | 0.032 | 0.000 | +3.498 | **rejected** |
 | USD/JPY | 1d | +2.31 | -2.15% | 0.994 | 0.813 | 0.008 | +2.566 | **rejected** |
 | ETH/JPY | 4h | +2.06 | -22.67% | 0.951 | 0.675 | 0.000 | +2.034 | **rejected** |
 | USD/JPY | 1h | +1.07 | -5.65% | 0.277 | 0.123 | 0.194 | +1.132 | **rejected** |
@@ -190,14 +180,14 @@ _合格基準: DSR ≥ 0.95 / PBO ≤ 0.20 / SPA p ≤ 0.05 / CPCV 中央値 ≥
 
 | symbol | tf | bt_sharpe | max_dd | dsr | pbo | spa_p | cpcv_med | 結果 |
 |---|---|---|---|---|---|---|---|---|
-| BTC/JPY | 1d | +2.96 | -2.22% | 1.000 | 0.175 | 0.004 | +3.171 | **incubating** |
-| XRP/JPY | 1d | +2.83 | -11.40% | 1.000 | 0.020 | 0.006 | +3.056 | **incubating** |
-| ETH/JPY | 1d | +2.89 | -5.77% | 1.000 | 0.179 | 0.000 | +2.754 | **incubating** |
-| BTC/JPY | 4h | +3.30 | -5.18% | 1.000 | 0.147 | 0.000 | +3.575 | **incubating** |
+| BTC/JPY | 1d | +2.96 | -2.22% | 1.000 | 0.175 | 0.004 | +3.171 | **rejected** |
+| XRP/JPY | 1d | +2.83 | -11.40% | 1.000 | 0.020 | 0.006 | +3.056 | **rejected** |
+| ETH/JPY | 1d | +2.89 | -5.77% | 1.000 | 0.179 | 0.000 | +2.754 | **rejected** |
+| BTC/JPY | 4h | +3.30 | -5.18% | 1.000 | 0.147 | 0.000 | +3.575 | **rejected** |
 | DEXJPUS | 1d | +0.73 | -16.21% | 1.000 | 0.718 | 0.000 | +0.753 | **rejected** |
-| XRP/JPY | 4h | +2.81 | -7.61% | 1.000 | 0.103 | 0.006 | +3.307 | **incubating** |
-| BTC/JPY | 1h | +2.75 | -5.31% | 1.000 | 0.194 | 0.000 | +3.049 | **incubating** |
-| ETH/JPY | 4h | +2.45 | -12.68% | 0.999 | 0.155 | 0.002 | +2.409 | **incubating** |
+| XRP/JPY | 4h | +2.81 | -7.61% | 1.000 | 0.103 | 0.006 | +3.307 | **rejected** |
+| BTC/JPY | 1h | +2.75 | -5.31% | 1.000 | 0.194 | 0.000 | +3.049 | **rejected** |
+| ETH/JPY | 4h | +2.45 | -12.68% | 0.999 | 0.155 | 0.002 | +2.409 | **rejected** |
 | ETH/JPY | 1h | +2.22 | -19.30% | 0.999 | 0.476 | 0.002 | +2.546 | **rejected** |
 | XRP/JPY | 1h | +2.45 | -7.63% | 0.998 | 0.429 | 0.000 | +3.000 | **rejected** |
 | USD/JPY | 1d | +2.78 | -1.43% | 0.998 | 0.198 | 0.000 | +2.953 | **incubating** |
