@@ -1,6 +1,6 @@
 # trade — paper report
 
-_generated 2026-11-26T03:18:48.193715+00:00 | cumulative trials: 986,307_
+_generated 2026-11-26T03:19:58.479232+00:00 | cumulative trials: 995,715_
 
 ## Champions (0)
 _none — waiting for a strategy to clear research → incubation → promotion_
