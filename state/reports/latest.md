@@ -1,23 +1,24 @@
 # trade — paper report
 
-_generated 2026-11-26T03:19:58.479232+00:00 | cumulative trials: 995,715_
+_generated 2026-11-26T04:55:07.507301+00:00 | cumulative trials: 995,715_
 
 ## Champions (0)
 _none — waiting for a strategy to clear research → incubation → promotion_
 
 ## Positions
-_flat_
+| symbol | qty | avg |
+|---|---|---|
+| USD/JPY | 83 | 159.223 |
 
 ## Equity
 | currency | start | current | return | max_dd | points |
 |---|---|---|---|---|---|
-| JPY | 1,000,000 | 997,920 | -0.21% | -0.23% | 974 |
-| USD | 10,000 | 10,000 | +0.00% | 0.00% | 974 |
+| JPY | 1,000,000 | 997,897 | -0.21% | -0.23% | 975 |
+| USD | 10,000 | 10,000 | +0.00% | 0.00% | 975 |
 
 ## Recent fills
 | time | symbol | side | qty | price | fee |
 |---|---|---|---|---|---|
-| 2026-11-11T23:47:25.434818+00:00 | BTC/JPY | sell | 4.54227e-05 | 1.1726e+07 | 0.6392 |
 | 2026-11-13T07:47:44.587563+00:00 | BTC/JPY | buy | 5.32939e-05 | 1.10189e+07 | 0.7047 |
 | 2026-11-14T03:03:07.204736+00:00 | BTC/JPY | sell | 0.00156625 | 1.07588e+07 | 20.22 |
 | 2026-11-14T03:03:07.204753+00:00 | XRP/JPY | buy | 26.1511 | 161.481 | 5.067 |
@@ -27,6 +28,7 @@ _flat_
 | 2026-11-15T01:45:45.346685+00:00 | XRP/JPY | sell | 25.8545 | 145.942 | 4.528 |
 | 2026-11-18T04:08:29.088687+00:00 | BTC/JPY | buy | 0.00037128 | 1.03114e+07 | 4.594 |
 | 2026-11-18T21:48:51.201064+00:00 | BTC/JPY | sell | 0.00037128 | 9.97023e+06 | 4.442 |
+| 2026-11-26T04:55:07.139435+00:00 | USD/JPY | buy | 83 | 159.223 | 15.86 |
 
 ## Pipeline
 _incubating: 2 | rejected: 145 | research-only passes: 10 | retired: 0_
